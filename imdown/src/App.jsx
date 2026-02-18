@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import Calendar from './components/Calendar'
 import Login from './components/Login'
 import './App.css'
@@ -6,23 +6,20 @@ import './App.css'
 const STORAGE_KEY = 'imdown_user'
 
 function App() {
-  const [user, setUser] = useState(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
+  const [user, setUser] = useState(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY)
       if (stored) {
         const parsed = JSON.parse(stored)
         if (parsed?.id && parsed?.username) {
-          setUser(parsed)
+          return parsed
         }
       }
-    } catch (_) {
+    } catch {
       // ignore invalid stored data
     }
-    setLoading(false)
-  }, [])
+    return null
+  })
 
   const handleLogin = (userData) => {
     setUser(userData)
@@ -32,14 +29,6 @@ function App() {
   const handleLogout = () => {
     setUser(null)
     localStorage.removeItem(STORAGE_KEY)
-  }
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
-        <div className="text-gray-600">Loading...</div>
-      </div>
-    )
   }
 
   if (!user) {
@@ -63,7 +52,7 @@ function App() {
             </button>
           </div>
         </div>
-        <Calendar />
+        <Calendar user={user} />
       </div>
     </div>
   )
