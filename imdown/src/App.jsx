@@ -5,6 +5,42 @@ import './App.css'
 
 const STORAGE_KEY = 'imdown_user'
 
+function Logo({ className = '' }) {
+  return (
+    <div className={`flex items-center gap-3 select-none ${className}`}>
+      {/* Icon mark */}
+      <div className="w-10 h-10 rounded-xl bg-black flex items-center justify-center shadow-md shadow-pine-900/20">
+        <svg viewBox="0 0 24 24" className="w-6 h-6" fill="none">
+          <path
+            d="M7 10l5 5 5-5"
+            stroke="#22c55e"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <path
+            d="M12 4v11"
+            stroke="#22c55e"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+          />
+          <path
+            d="M5 18h14"
+            stroke="white"
+            strokeWidth="2"
+            strokeLinecap="round"
+          />
+        </svg>
+      </div>
+      {/* Wordmark */}
+      <span className="text-3xl font-bold tracking-tight">
+        <span className="text-black">Im</span>
+        <span className="text-pine-800">Down</span>
+      </span>
+    </div>
+  )
+}
+
 function App() {
   const [user, setUser] = useState(() => {
     try {
@@ -36,17 +72,17 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-8 px-4">
-      <div className="container mx-auto">
+    <div className="min-h-screen bg-gradient-to-br from-pine-50 via-white to-pine-50 py-8 px-4">
+      <div className="container mx-auto max-w-5xl">
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-800">ImDown</h1>
+          <Logo />
           <div className="flex items-center gap-4">
-            <span className="text-gray-700">
-              Welcome, <strong>{user.username}</strong>!
+            <span className="text-gray-600 text-sm">
+              Welcome, <strong className="text-gray-900">{user.username}</strong>
             </span>
             <button
               onClick={handleLogout}
-              className="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition-colors"
+              className="bg-gray-900 text-white px-4 py-2 rounded-lg hover:bg-black transition-colors text-sm font-medium"
             >
               Logout
             </button>
