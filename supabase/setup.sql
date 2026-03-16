@@ -3,6 +3,9 @@
 -- Run this entire file in the Supabase SQL Editor once the
 -- project is unpaused. It is idempotent for the ALTER statements
 -- but CREATE TABLE will fail if tables already exist.
+--
+-- NOTE: The existing users table uses bigint (int8) for its id
+-- column, so all foreign keys referencing users(id) use bigint.
 -- ============================================================
 
 -- 1. Update the existing users table -------------------------
@@ -36,7 +39,7 @@ END $$;
 CREATE TABLE IF NOT EXISTS groups (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name       text NOT NULL,
-  created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_by bigint REFERENCES users(id) ON DELETE SET NULL,
   created_at timestamptz DEFAULT now()
 );
 
@@ -45,7 +48,7 @@ CREATE TABLE IF NOT EXISTS groups (
 CREATE TABLE IF NOT EXISTS group_members (
   id        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   group_id  uuid NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-  user_id   uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id   bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   role      text NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member')),
   joined_at timestamptz DEFAULT now(),
   UNIQUE (group_id, user_id)
@@ -55,7 +58,7 @@ CREATE TABLE IF NOT EXISTS group_members (
 
 CREATE TABLE IF NOT EXISTS events (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  created_by uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_by bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   title      text NOT NULL,
   location   text DEFAULT '',
   details    text DEFAULT '',
@@ -65,7 +68,7 @@ CREATE TABLE IF NOT EXISTS events (
   CHECK (end_time > start_time)
 );
 
--- 5. Event ↔ Group junction ----------------------------------
+-- 5. Event <-> Group junction --------------------------------
 
 CREATE TABLE IF NOT EXISTS event_groups (
   id       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -79,7 +82,7 @@ CREATE TABLE IF NOT EXISTS event_groups (
 CREATE TABLE IF NOT EXISTS event_rsvps (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id     uuid NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  user_id      uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id      bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   status       text NOT NULL CHECK (status IN ('going', 'maybe', 'notgoing')),
   responded_at timestamptz DEFAULT now(),
   UNIQUE (event_id, user_id)

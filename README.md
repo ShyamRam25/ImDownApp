@@ -69,7 +69,11 @@ To enable the "Import Google Cal" feature, you need a Google Cloud project with 
 
 ## Supabase Setup (Manual Steps)
 
-Once your Supabase project is unpaused, open the **SQL Editor** in the Supabase dashboard and run the following sections in order.
+Once your Supabase project is unpaused, the easiest path is to open the **SQL Editor** and paste the entire contents of `supabase/setup.sql`. It handles everything in one shot.
+
+Alternatively, you can run each section below individually.
+
+**Important:** The existing `users.id` column is `bigint` (not `uuid`), so all foreign keys referencing it use `bigint`.
 
 ### 1. Update the `users` table
 
@@ -102,7 +106,7 @@ ALTER TABLE users
 CREATE TABLE groups (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name       text NOT NULL,
-  created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_by bigint REFERENCES users(id) ON DELETE SET NULL,
   created_at timestamptz DEFAULT now()
 );
 ```
@@ -113,7 +117,7 @@ CREATE TABLE groups (
 CREATE TABLE group_members (
   id        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   group_id  uuid NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-  user_id   uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id   bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   role      text NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member')),
   joined_at timestamptz DEFAULT now(),
   UNIQUE (group_id, user_id)
@@ -125,7 +129,7 @@ CREATE TABLE group_members (
 ```sql
 CREATE TABLE events (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  created_by uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_by bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   title      text NOT NULL,
   location   text DEFAULT '',
   details    text DEFAULT '',
@@ -153,7 +157,7 @@ CREATE TABLE event_groups (
 CREATE TABLE event_rsvps (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id     uuid NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  user_id      uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id      bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   status       text NOT NULL CHECK (status IN ('going', 'maybe', 'notgoing')),
   responded_at timestamptz DEFAULT now(),
   UNIQUE (event_id, user_id)
@@ -198,8 +202,8 @@ If you switch to Supabase Auth later, enable RLS on each table and add policies 
 ## Database Schema
 
 ```
-users
-  id          uuid PK
+users (pre-existing table, id is bigint)
+  id          bigint PK (auto-increment)
   username    text UNIQUE
   password    text (nullable, not needed for Google login)
   google_id   text UNIQUE (nullable, set for Google-authenticated users)
@@ -210,19 +214,19 @@ users
 groups
   id          uuid PK
   name        text
-  created_by  uuid FK → users
+  created_by  bigint FK → users
   created_at  timestamptz
 
 group_members
   id          uuid PK
   group_id    uuid FK → groups
-  user_id     uuid FK → users
+  user_id     bigint FK → users
   role        text ('admin' | 'member')
   joined_at   timestamptz
 
 events
   id          uuid PK
-  created_by  uuid FK → users
+  created_by  bigint FK → users
   title       text
   location    text
   details     text
@@ -238,7 +242,7 @@ event_groups
 event_rsvps
   id          uuid PK
   event_id    uuid FK → events
-  user_id     uuid FK → users
+  user_id     bigint FK → users
   status      text ('going' | 'maybe' | 'notgoing')
   responded_at timestamptz
 ```
