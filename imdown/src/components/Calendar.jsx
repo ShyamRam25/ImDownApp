@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { supabase } from '../lib/supabase';
 
-const EVENT_STORAGE_PREFIX = 'imdown_events_';
 const VIEW_STORAGE_KEY = 'imdown_calendar_view';
 
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -17,24 +17,16 @@ const hmLocal = (date) => {
 
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 
-const Calendar = ({ user }) => {
+const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(null);
   const [view, setView] = useState(() => {
     const stored = localStorage.getItem(VIEW_STORAGE_KEY);
     return stored === 'week' || stored === 'day' || stored === 'month' ? stored : 'month';
-  }); // 'month' | 'week' | 'day'
-
-  const [events, setEvents] = useState(() => {
-    if (!user?.id) return [];
-    try {
-      const raw = localStorage.getItem(`${EVENT_STORAGE_PREFIX}${user.id}`);
-      const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
   });
+
+  const [events, setEvents] = useState([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
 
   const [eventModalOpen, setEventModalOpen] = useState(false);
   const [draftTitle, setDraftTitle] = useState('');
@@ -43,17 +35,17 @@ const Calendar = ({ user }) => {
   const [draftStart, setDraftStart] = useState('12:00');
   const [draftEnd, setDraftEnd] = useState('13:00');
   const [draftDetails, setDraftDetails] = useState('');
-  const [draftGroups, setDraftGroups] = useState(['CSCW classmates']);
+  const [draftGroups, setDraftGroups] = useState([]);
   const [eventError, setEventError] = useState('');
   const [viewingEvent, setViewingEvent] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   const monthNames = [
     'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
+    'July', 'August', 'September', 'October', 'November', 'December',
   ];
 
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const groupOptions = ['CSCW classmates', 'soccer teammates', 'capstone group', 'home town friends'];
 
   const addDays = (date, amount) => {
     const d = new Date(date);
@@ -67,25 +59,15 @@ const Calendar = ({ user }) => {
   };
 
   const parseLocalDateTime = (ymd, hm) => {
-    // ymd: YYYY-MM-DD, hm: HH:mm (local)
     const [y, m, d] = ymd.split('-').map(Number);
     const [hh, mm] = hm.split(':').map(Number);
     return new Date(y, (m ?? 1) - 1, d ?? 1, hh ?? 0, mm ?? 0, 0, 0);
   };
 
-  const persistEvents = (nextEvents) => {
-    if (!user?.id) return;
-    try {
-      localStorage.setItem(`${EVENT_STORAGE_PREFIX}${user.id}`, JSON.stringify(nextEvents));
-    } catch {
-      // ignore storage failures
-    }
-  };
-
   const startOfWeek = (date) => {
     const d = new Date(date);
     d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() - d.getDay()); // Sunday-start week
+    d.setDate(d.getDate() - d.getDay());
     return d;
   };
 
@@ -95,6 +77,175 @@ const Calendar = ({ user }) => {
     return d;
   };
 
+  // ── Fetch events from Supabase ──────────────────────────────────────
+
+  const fetchEvents = useCallback(async () => {
+    if (!user?.id) return;
+
+    const groupIds =
+      selectedGroupId === 'all'
+        ? groups.map((g) => g.id)
+        : [selectedGroupId];
+
+    if (groupIds.length === 0) {
+      setEvents([]);
+      return;
+    }
+
+    setEventsLoading(true);
+    try {
+      const { data: links, error: linksErr } = await supabase
+        .from('event_groups')
+        .select('event_id')
+        .in('group_id', groupIds);
+
+      if (linksErr) throw linksErr;
+
+      const eventIds = [...new Set((links || []).map((l) => l.event_id))];
+      if (eventIds.length === 0) {
+        setEvents([]);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('events')
+        .select('*, event_rsvps(user_id, status), event_groups(group_id)')
+        .in('id', eventIds)
+        .order('start_time', { ascending: true });
+
+      if (error) throw error;
+      setEvents(data || []);
+    } catch (err) {
+      console.error('Failed to fetch events:', err.message);
+    } finally {
+      setEventsLoading(false);
+    }
+  }, [user?.id, selectedGroupId, groups, refreshKey]);
+
+  useEffect(() => {
+    fetchEvents();
+  }, [fetchEvents]);
+
+  // ── Event CRUD ──────────────────────────────────────────────────────
+
+  const openCreateEvent = () => {
+    const base = selectedDate ?? currentDate;
+    setDraftTitle('');
+    setDraftLocation('');
+    setDraftDate(ymdLocal(base));
+    setDraftStart('12:00');
+    setDraftEnd('13:00');
+    setDraftDetails('');
+    setDraftGroups(groups.length > 0 ? [groups[0].id] : []);
+    setEventError('');
+    setEventModalOpen(true);
+  };
+
+  const createEvent = async () => {
+    const title = draftTitle.trim();
+    if (!title) { setEventError('Please enter a title.'); return; }
+    if (draftGroups.length === 0) { setEventError('Select at least one group.'); return; }
+
+    const start = parseLocalDateTime(draftDate, draftStart);
+    const end = parseLocalDateTime(draftDate, draftEnd);
+    if (!(start instanceof Date) || Number.isNaN(start.getTime())) { setEventError('Invalid start time.'); return; }
+    if (!(end instanceof Date) || Number.isNaN(end.getTime())) { setEventError('Invalid end time.'); return; }
+    if (end <= start) { setEventError('End time must be after start time.'); return; }
+
+    setSaving(true);
+    setEventError('');
+    try {
+      const { data: event, error: evErr } = await supabase
+        .from('events')
+        .insert({
+          created_by: user.id,
+          title,
+          location: draftLocation.trim(),
+          details: draftDetails.trim(),
+          start_time: start.toISOString(),
+          end_time: end.toISOString(),
+        })
+        .select()
+        .single();
+
+      if (evErr) throw evErr;
+
+      const { error: linkErr } = await supabase
+        .from('event_groups')
+        .insert(draftGroups.map((gid) => ({ event_id: event.id, group_id: gid })));
+
+      if (linkErr) throw linkErr;
+
+      setEventModalOpen(false);
+      fetchEvents();
+    } catch (err) {
+      setEventError(err.message || 'Failed to create event.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteEvent = async (eventId) => {
+    try {
+      const { error } = await supabase
+        .from('events')
+        .delete()
+        .eq('id', eventId)
+        .eq('created_by', user.id);
+
+      if (error) throw error;
+      setEvents((prev) => prev.filter((e) => e.id !== eventId));
+    } catch (err) {
+      console.error('Failed to delete event:', err.message);
+    }
+  };
+
+  const updateEventRsvp = async (eventId, status) => {
+    const existing = events.find((e) => e.id === eventId);
+    const currentRsvp = existing?.event_rsvps?.find((r) => r.user_id === user.id);
+    const isSame = currentRsvp?.status === status;
+
+    try {
+      if (isSame) {
+        await supabase
+          .from('event_rsvps')
+          .delete()
+          .eq('event_id', eventId)
+          .eq('user_id', user.id);
+      } else {
+        await supabase
+          .from('event_rsvps')
+          .upsert(
+            { event_id: eventId, user_id: user.id, status, responded_at: new Date().toISOString() },
+            { onConflict: 'event_id,user_id' }
+          );
+      }
+      fetchEvents();
+    } catch (err) {
+      console.error('Failed to update RSVP:', err.message);
+    }
+  };
+
+  const getUserRsvp = (ev) => {
+    return ev?.event_rsvps?.find((r) => r.user_id === user.id)?.status ?? null;
+  };
+
+  const getRsvpCounts = (ev) => {
+    const rsvps = ev?.event_rsvps || [];
+    return {
+      going: rsvps.filter((r) => r.status === 'going').length,
+      maybe: rsvps.filter((r) => r.status === 'maybe').length,
+      notgoing: rsvps.filter((r) => r.status === 'notgoing').length,
+    };
+  };
+
+  const openEventDetail = (ev) => {
+    const fresh = events.find((e) => e.id === ev.id) ?? ev;
+    setViewingEvent(fresh);
+  };
+
+  // ── Calendar view helpers ───────────────────────────────────────────
+
   const getDaysInMonth = (date) => {
     const year = date.getFullYear();
     const month = date.getMonth();
@@ -102,19 +253,9 @@ const Calendar = ({ user }) => {
     const lastDay = new Date(year, month + 1, 0);
     const daysInMonth = lastDay.getDate();
     const startingDayOfWeek = firstDay.getDay();
-
     const days = [];
-    
-    // Add empty cells for days before the first day of the month
-    for (let i = 0; i < startingDayOfWeek; i++) {
-      days.push(null);
-    }
-    
-    // Add all days of the month
-    for (let day = 1; day <= daysInMonth; day++) {
-      days.push(new Date(year, month, day));
-    }
-    
+    for (let i = 0; i < startingDayOfWeek; i++) days.push(null);
+    for (let day = 1; day <= daysInMonth; day++) days.push(new Date(year, month, day));
     return days;
   };
 
@@ -123,7 +264,6 @@ const Calendar = ({ user }) => {
       setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
       return;
     }
-
     const delta = view === 'week' ? -7 : -1;
     setCurrentDate((prev) => addDays(prev, delta));
     setSelectedDate((prev) => (prev ? addDays(prev, delta) : prev));
@@ -134,7 +274,6 @@ const Calendar = ({ user }) => {
       setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
       return;
     }
-
     const delta = view === 'week' ? 7 : 1;
     setCurrentDate((prev) => addDays(prev, delta));
     setSelectedDate((prev) => (prev ? addDays(prev, delta) : prev));
@@ -147,10 +286,7 @@ const Calendar = ({ user }) => {
   };
 
   const handleDateClick = (date) => {
-    if (date) {
-      setSelectedDate(date);
-      setCurrentDate(date);
-    }
+    if (date) { setSelectedDate(date); setCurrentDate(date); }
   };
 
   const handleViewChange = (nextView) => {
@@ -161,81 +297,7 @@ const Calendar = ({ user }) => {
     }
   };
 
-  const openCreateEvent = () => {
-    const base = selectedDate ?? currentDate;
-    setDraftTitle('');
-    setDraftLocation('');
-    setDraftDate(ymdLocal(base));
-    setDraftStart('12:00');
-    setDraftEnd('13:00');
-    setDraftDetails('');
-    setDraftGroups(['CSCW classmates']);
-    setEventError('');
-    setEventModalOpen(true);
-  };
-
-  const createEvent = () => {
-    const title = draftTitle.trim();
-    if (!title) {
-      setEventError('Please enter a title.');
-      return;
-    }
-
-    const start = parseLocalDateTime(draftDate, draftStart);
-    const end = parseLocalDateTime(draftDate, draftEnd);
-    if (!(start instanceof Date) || Number.isNaN(start.getTime())) {
-      setEventError('Invalid start time.');
-      return;
-    }
-    if (!(end instanceof Date) || Number.isNaN(end.getTime())) {
-      setEventError('Invalid end time.');
-      return;
-    }
-    if (end <= start) {
-      setEventError('End time must be after start time.');
-      return;
-    }
-
-    const newEvent = {
-      id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
-      userId: user?.id ?? null,
-      title,
-      location: draftLocation.trim(),
-      details: draftDetails.trim(),
-      inviteGroups: draftGroups,
-      start: start.toISOString(),
-      end: end.toISOString(),
-      color: 'blue',
-    };
-
-    const nextEvents = [...events, newEvent].sort((a, b) => new Date(a.start) - new Date(b.start));
-    setEvents(nextEvents);
-    persistEvents(nextEvents);
-    setEventModalOpen(false);
-    setEventError('');
-  };
-
-  const deleteEvent = (eventId) => {
-    const nextEvents = events.filter((e) => e.id !== eventId);
-    setEvents(nextEvents);
-    persistEvents(nextEvents);
-  };
-
-  const updateEventRsvp = (eventId, status) => {
-    const nextEvents = events.map((e) =>
-      e.id === eventId ? { ...e, rsvp: e.rsvp === status ? null : status } : e
-    );
-    setEvents(nextEvents);
-    persistEvents(nextEvents);
-    setViewingEvent((prev) =>
-      prev?.id === eventId ? { ...prev, rsvp: prev.rsvp === status ? null : status } : prev
-    );
-  };
-
-  const openEventDetail = (ev) => {
-    const fresh = events.find((e) => e.id === ev.id) ?? ev;
-    setViewingEvent(fresh);
-  };
+  // ── Derived data ────────────────────────────────────────────────────
 
   const visibleStart = useMemo(() => {
     if (view === 'month') return new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
@@ -253,8 +315,8 @@ const Calendar = ({ user }) => {
     const startMs = visibleStart.getTime();
     const endMs = visibleEnd.getTime();
     return events.filter((e) => {
-      const s = new Date(e.start).getTime();
-      const en = new Date(e.end).getTime();
+      const s = new Date(e.start_time).getTime();
+      const en = new Date(e.end_time).getTime();
       return en > startMs && s < endMs;
     });
   }, [events, visibleStart, visibleEnd]);
@@ -264,36 +326,29 @@ const Calendar = ({ user }) => {
     const dayEnd = addDays(startOfDay(date), 1).getTime();
     return eventsInRange
       .filter((e) => {
-        const s = new Date(e.start).getTime();
-        const en = new Date(e.end).getTime();
+        const s = new Date(e.start_time).getTime();
+        const en = new Date(e.end_time).getTime();
         return en > dayStart && s < dayEnd;
       })
-      .sort((a, b) => new Date(a.start) - new Date(b.start));
+      .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
   };
 
   const isToday = (date) => {
     if (!date) return false;
     const today = new Date();
-    return (
-      date.getDate() === today.getDate() &&
-      date.getMonth() === today.getMonth() &&
-      date.getFullYear() === today.getFullYear()
-    );
+    return date.getDate() === today.getDate() && date.getMonth() === today.getMonth() && date.getFullYear() === today.getFullYear();
   };
 
   const isSelected = (date) => {
     if (!date || !selectedDate) return false;
-    return (
-      date.getDate() === selectedDate.getDate() &&
-      date.getMonth() === selectedDate.getMonth() &&
-      date.getFullYear() === selectedDate.getFullYear()
-    );
+    return date.getDate() === selectedDate.getDate() && date.getMonth() === selectedDate.getMonth() && date.getFullYear() === selectedDate.getFullYear();
   };
+
+  const isMine = (ev) => ev.created_by === user?.id;
 
   const days = getDaysInMonth(currentDate);
   const currentMonth = monthNames[currentDate.getMonth()];
   const currentYear = currentDate.getFullYear();
-
   const weekStart = startOfWeek(currentDate);
   const weekDates = Array.from({ length: 7 }, (_, idx) => addDays(weekStart, idx));
   const weekEnd = weekDates[6];
@@ -304,45 +359,45 @@ const Calendar = ({ user }) => {
       const d = selectedDate ?? currentDate;
       return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
     }
-
     const startLabel = weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     const endLabel = weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    const yearLabel = weekEnd.getFullYear();
-    return `${startLabel} – ${endLabel}, ${yearLabel}`;
+    return `${startLabel} – ${endLabel}, ${weekEnd.getFullYear()}`;
   })();
 
+  // ── Styling helpers for own vs others' events ───────────────────────
+
+  const eventChipClass = (ev) =>
+    isMine(ev)
+      ? 'bg-blue-500 text-white hover:bg-blue-600'
+      : 'bg-blue-200 text-blue-800 opacity-70 hover:opacity-90';
+
+  const eventHeaderBg = (ev) => (isMine(ev) ? 'bg-blue-500' : 'bg-blue-300');
+
+  // ── Render ──────────────────────────────────────────────────────────
+
   return (
-    <div className="w-full max-w-5xl mx-auto p-6 bg-white rounded-2xl shadow-xl shadow-black/5 border border-gray-100">
+    <div className="w-full max-w-4xl mx-auto p-6 bg-white rounded-lg shadow-lg">
       {/* Calendar Header */}
       <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
         <button
           onClick={goToPrevious}
-          className="p-2 hover:bg-pine-50 rounded-xl transition-colors text-gray-700 hover:text-pine-800"
+          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
           aria-label={view === 'month' ? 'Previous month' : view === 'week' ? 'Previous week' : 'Previous day'}
         >
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </button>
-        
-        <div className="flex items-center gap-3">
-          <h2 className="text-2xl font-bold text-gray-900 tracking-tight">
-            {headerText}
-          </h2>
-          <button
-            onClick={goToToday}
-            className="px-4 py-2 bg-pine-800 text-white rounded-xl hover:bg-pine-900 transition-colors text-sm font-semibold shadow-sm"
-          >
+
+        <div className="flex items-center gap-4">
+          <h2 className="text-2xl font-bold text-gray-800">{headerText}</h2>
+          <button onClick={goToToday} className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm font-medium">
             Today
           </button>
-          <button
-            onClick={openCreateEvent}
-            className="px-4 py-2 bg-black text-white rounded-xl hover:bg-gray-800 transition-colors text-sm font-semibold shadow-sm"
-          >
+          <button onClick={openCreateEvent} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium">
             + Event
           </button>
-
-          <div className="inline-flex rounded-xl bg-pine-50 p-1 border border-pine-100">
+          <div className="inline-flex rounded-lg bg-gray-100 p-1">
             {['month', 'week', 'day'].map((v) => {
               const active = view === v;
               return (
@@ -350,8 +405,8 @@ const Calendar = ({ user }) => {
                   key={v}
                   onClick={() => handleViewChange(v)}
                   className={[
-                    'px-3 py-1.5 text-sm font-semibold rounded-lg transition-all',
-                    active ? 'bg-white text-pine-900 shadow-sm' : 'text-pine-700/70 hover:text-pine-900'
+                    'px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
+                    active ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900',
                   ].join(' ')}
                   aria-pressed={active}
                 >
@@ -361,10 +416,10 @@ const Calendar = ({ user }) => {
             })}
           </div>
         </div>
-        
+
         <button
           onClick={goToNext}
-          className="p-2 hover:bg-pine-50 rounded-xl transition-colors text-gray-700 hover:text-pine-800"
+          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
           aria-label={view === 'month' ? 'Next month' : view === 'week' ? 'Next week' : 'Next day'}
         >
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -373,53 +428,38 @@ const Calendar = ({ user }) => {
         </button>
       </div>
 
+      {eventsLoading && (
+        <div className="text-center py-2 text-sm text-gray-400">Loading events...</div>
+      )}
+
+      {/* Day-name header row (month + week views) */}
       {view !== 'day' && (
-        <div
-          className="grid gap-1 mb-1"
-          style={{ gridTemplateColumns: 'repeat(7, minmax(0, 1fr))' }}
-        >
+        <div className="grid gap-1 mb-1" style={{ gridTemplateColumns: 'repeat(7, minmax(0, 1fr))' }}>
           {dayNames.map((day) => (
-            <div
-              key={day}
-              className="text-center text-xs font-bold text-pine-800 uppercase tracking-wider py-2"
-            >
-              {day}
-            </div>
+            <div key={day} className="text-center text-sm font-semibold text-gray-600 py-2">{day}</div>
           ))}
         </div>
       )}
 
+      {/* ── Month view ─────────────────────────────────────────────── */}
       {view === 'month' && (
-        <div
-          className="grid gap-1"
-          style={{ gridTemplateColumns: 'repeat(7, minmax(0, 1fr))' }}
-        >
+        <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(7, minmax(0, 1fr))' }}>
           {days.map((date, index) => {
-            if (!date) {
-              return (
-                <div
-                  key={`empty-${index}`}
-                  className="aspect-square min-h-[60px]"
-                />
-              );
-            }
-
+            if (!date) return <div key={`empty-${index}`} className="aspect-square min-h-[60px]" />;
             const isCurrentDay = isToday(date);
             const isSelectedDay = isSelected(date);
-
             return (
               <button
                 key={date.toISOString()}
                 onClick={() => handleDateClick(date)}
                 className={`
-                  aspect-square min-h-[60px] p-1 rounded-xl transition-all
-                  flex items-center justify-center text-sm font-semibold
+                  aspect-square min-h-[60px] p-1 rounded-lg transition-all
+                  flex items-center justify-center text-sm font-medium
                   ${isSelectedDay
-                    ? 'bg-pine-800 text-white shadow-md shadow-pine-900/30 scale-105'
+                    ? 'bg-blue-500 text-white shadow-md scale-105'
                     : isCurrentDay
-                    ? 'bg-pine-100 text-pine-900 ring-2 ring-pine-600'
-                    : 'bg-gray-50/50 text-gray-800 hover:bg-pine-50'
-                  }
+                    ? 'bg-blue-100 text-blue-700 border-2 border-blue-500'
+                    : 'bg-gray-50 text-gray-700 hover:bg-gray-100'}
                   hover:scale-105 active:scale-95
                 `}
               >
@@ -430,11 +470,11 @@ const Calendar = ({ user }) => {
         </div>
       )}
 
+      {/* ── Week view ──────────────────────────────────────────────── */}
       {view === 'week' && (
-        <div className="border border-gray-200 rounded-xl overflow-hidden">
-          {/* Day headers */}
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
           <div className="grid" style={{ gridTemplateColumns: '64px repeat(7, minmax(0, 1fr))' }}>
-            <div className="bg-pine-50/50 border-b border-gray-200" />
+            <div className="bg-white border-b border-gray-200" />
             {weekDates.map((date) => {
               const isCurrentDay = isToday(date);
               const isSelectedDay = isSelected(date);
@@ -444,16 +484,14 @@ const Calendar = ({ user }) => {
                   onClick={() => handleDateClick(date)}
                   className={[
                     'py-2 border-b border-gray-200 text-center transition-colors',
-                    isSelectedDay ? 'bg-pine-50' : 'bg-white hover:bg-pine-50/50',
+                    isSelectedDay ? 'bg-blue-50' : 'bg-white hover:bg-gray-50',
                   ].join(' ')}
                 >
-                  <div className="text-xs font-bold text-pine-800 uppercase tracking-wider">{dayNames[date.getDay()]}</div>
-                  <div
-                    className={[
-                      'mt-1 inline-flex items-center justify-center w-8 h-8 rounded-full text-sm font-bold',
-                      isSelectedDay ? 'bg-pine-800 text-white' : isCurrentDay ? 'bg-pine-100 text-pine-900' : 'text-gray-800',
-                    ].join(' ')}
-                  >
+                  <div className="text-xs font-semibold text-gray-600">{dayNames[date.getDay()]}</div>
+                  <div className={[
+                    'mt-1 inline-flex items-center justify-center w-8 h-8 rounded-full text-sm font-bold',
+                    isSelectedDay ? 'bg-blue-500 text-white' : isCurrentDay ? 'bg-blue-100 text-blue-700' : 'text-gray-800',
+                  ].join(' ')}>
                     {date.getDate()}
                   </div>
                 </button>
@@ -461,25 +499,23 @@ const Calendar = ({ user }) => {
             })}
           </div>
 
-          {/* Hour grid + event overlay share the same relative container */}
           <div className="relative">
             <div className="grid" style={{ gridTemplateColumns: '64px repeat(7, minmax(0, 1fr))' }}>
               {Array.from({ length: 24 }, (_, hour) => (
                 <div key={`hour-${hour}`} className="contents">
-                  <div className="relative border-b border-gray-100 bg-pine-50/30">
-                    <div className="absolute -top-2 right-2 text-[10px] font-medium text-gray-400">
+                  <div className="relative border-b border-gray-100 bg-white">
+                    <div className="absolute -top-2 right-2 text-[10px] text-gray-400">
                       {hour === 0 ? '' : `${hour % 12 === 0 ? 12 : hour % 12}${hour < 12 ? 'AM' : 'PM'}`}
                     </div>
                     <div className="h-12" />
                   </div>
                   {weekDates.map((date) => (
-                    <div key={`cell-${ymdLocal(date)}-${hour}`} className="border-b border-gray-100 border-l bg-white h-12" />
+                    <div key={`cell-${ymdLocal(date)}-${hour}`} className="border-b border-gray-100 border-l border-gray-100 bg-white h-12" />
                   ))}
                 </div>
               ))}
             </div>
 
-            {/* Event overlay positioned over the hour grid */}
             <div className="absolute inset-0 grid pointer-events-none" style={{ gridTemplateColumns: '64px repeat(7, minmax(0, 1fr))' }}>
               <div />
               {weekDates.map((date) => {
@@ -488,8 +524,8 @@ const Calendar = ({ user }) => {
                 return (
                   <div key={`events-${ymdLocal(date)}`} className="relative" style={{ height: totalHeight }}>
                     {dayEvents.map((ev) => {
-                      const s = new Date(ev.start);
-                      const e = new Date(ev.end);
+                      const s = new Date(ev.start_time);
+                      const e = new Date(ev.end_time);
                       const top = (minutesIntoDay(s) / 1440) * totalHeight;
                       const height = clamp(((e - s) / (1000 * 60) / 1440) * totalHeight, 18, totalHeight);
                       return (
@@ -497,12 +533,12 @@ const Calendar = ({ user }) => {
                           key={ev.id}
                           type="button"
                           onClick={() => openEventDetail(ev)}
-                          className="absolute left-1 right-1 rounded-lg bg-pine-800 text-white text-xs px-2 py-1 shadow-sm shadow-pine-900/20 pointer-events-auto hover:bg-pine-900 cursor-pointer overflow-hidden border border-pine-700"
+                          className={`absolute left-1 right-1 rounded-md text-xs px-2 py-1 shadow pointer-events-auto cursor-pointer overflow-hidden ${eventChipClass(ev)}`}
                           style={{ top, height }}
                           title={`${ev.title} · ${hmLocal(s)}–${hmLocal(e)}`}
                         >
                           <div className="font-semibold truncate">{ev.title}</div>
-                          <div className="opacity-80 truncate">{hmLocal(s)}–{hmLocal(e)}</div>
+                          <div className="opacity-90 truncate">{hmLocal(s)}–{hmLocal(e)}</div>
                         </button>
                       );
                     })}
@@ -514,44 +550,42 @@ const Calendar = ({ user }) => {
         </div>
       )}
 
+      {/* ── Day view ───────────────────────────────────────────────── */}
       {view === 'day' && (
-        <div className="border border-gray-200 rounded-xl overflow-hidden">
-          {/* Day header */}
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
           <div className="grid" style={{ gridTemplateColumns: '64px 1fr' }}>
-            <div className="bg-pine-50/50 border-b border-gray-200" />
+            <div className="bg-white border-b border-gray-200" />
             <div className="bg-white border-b border-gray-200 py-2 text-center">
-              <div className="text-xs font-bold text-pine-800 uppercase tracking-wider">
+              <div className="text-xs font-semibold text-gray-600">
                 {(selectedDate ?? currentDate).toLocaleDateString('en-US', { weekday: 'long' })}
               </div>
-              <div className="mt-1 text-sm font-bold text-gray-900">
+              <div className="mt-1 text-sm font-bold text-gray-800">
                 {(selectedDate ?? currentDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
               </div>
             </div>
           </div>
 
-          {/* Hour grid + event overlay share the same relative container */}
           <div className="relative">
             <div className="grid" style={{ gridTemplateColumns: '64px 1fr' }}>
               {Array.from({ length: 24 }, (_, hour) => (
                 <div key={`day-hour-${hour}`} className="contents">
-                  <div className="relative border-b border-gray-100 bg-pine-50/30">
-                    <div className="absolute -top-2 right-2 text-[10px] font-medium text-gray-400">
+                  <div className="relative border-b border-gray-100 bg-white">
+                    <div className="absolute -top-2 right-2 text-[10px] text-gray-400">
                       {hour === 0 ? '' : `${hour % 12 === 0 ? 12 : hour % 12}${hour < 12 ? 'AM' : 'PM'}`}
                     </div>
                     <div className="h-12" />
                   </div>
-                  <div className="border-b border-gray-100 border-l bg-white h-12" />
+                  <div className="border-b border-gray-100 border-l border-gray-100 bg-white h-12" />
                 </div>
               ))}
             </div>
 
-            {/* Event overlay positioned over the hour grid */}
             <div className="absolute inset-0 grid pointer-events-none" style={{ gridTemplateColumns: '64px 1fr' }}>
               <div />
               <div className="relative" style={{ height: 24 * 48 }}>
                 {eventsForDay(selectedDate ?? currentDate).map((ev) => {
-                  const s = new Date(ev.start);
-                  const e = new Date(ev.end);
+                  const s = new Date(ev.start_time);
+                  const e = new Date(ev.end_time);
                   const totalHeight = 24 * 48;
                   const top = (minutesIntoDay(s) / 1440) * totalHeight;
                   const height = clamp(((e - s) / (1000 * 60) / 1440) * totalHeight, 18, totalHeight);
@@ -560,12 +594,12 @@ const Calendar = ({ user }) => {
                       key={ev.id}
                       type="button"
                       onClick={() => openEventDetail(ev)}
-                      className="absolute left-2 right-2 rounded-lg bg-pine-800 text-white text-xs px-2 py-1 shadow-sm shadow-pine-900/20 pointer-events-auto hover:bg-pine-900 cursor-pointer overflow-hidden border border-pine-700"
+                      className={`absolute left-2 right-2 rounded-md text-xs px-2 py-1 shadow pointer-events-auto cursor-pointer overflow-hidden ${eventChipClass(ev)}`}
                       style={{ top, height }}
                       title={`${ev.title} · ${hmLocal(s)}–${hmLocal(e)}`}
                     >
                       <div className="font-semibold truncate">{ev.title}</div>
-                      <div className="opacity-80 truncate">{hmLocal(s)}–{hmLocal(e)}</div>
+                      <div className="opacity-90 truncate">{hmLocal(s)}–{hmLocal(e)}</div>
                     </button>
                   );
                 })}
@@ -577,56 +611,51 @@ const Calendar = ({ user }) => {
 
       {/* Selected Date Display */}
       {selectedDate && (
-        <div className="mt-6 p-4 bg-pine-50 rounded-xl border border-pine-100">
-          <p className="text-xs font-bold text-pine-700 uppercase tracking-wider mb-0.5">Selected Date</p>
-          <p className="text-lg font-semibold text-gray-900">
-            {selectedDate.toLocaleDateString('en-US', {
-              weekday: 'long',
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric'
-            })}
+        <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+          <p className="text-sm text-gray-600">Selected Date:</p>
+          <p className="text-lg font-semibold text-gray-800">
+            {selectedDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
           </p>
         </div>
       )}
 
+      {/* ── Create Event Modal ─────────────────────────────────────── */}
       {eventModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-          <div className="w-full max-w-5xl bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden">
-            {/* Modal header */}
-            <div className="bg-black px-6 py-4 flex items-center justify-between">
-              <h3 className="text-2xl font-bold text-white">New Event</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30">
+          <div className="w-full max-w-5xl bg-white rounded-xl shadow-2xl p-6 border border-gray-200 font-teams">
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <h3 className="text-3xl font-bold text-gray-900">New Event</h3>
               <button
                 type="button"
                 onClick={() => setEventModalOpen(false)}
-                className="text-white/70 hover:text-white text-lg font-bold transition-colors"
+                className="px-3 py-1 border-2 border-gray-900 rounded-md hover:bg-black/5 text-gray-900 font-bold"
                 aria-label="Close"
               >
-                ✕
+                X
               </button>
             </div>
 
-            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Left column */}
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-bold text-gray-900 uppercase tracking-wider mb-1.5">
+                  <label className="block text-lg font-bold text-gray-900 mb-1">
                     Title <span className="text-red-600">*</span>
                   </label>
                   <input
                     value={draftTitle}
                     onChange={(e) => setDraftTitle(e.target.value)}
-                    className="w-full px-3 py-2.5 bg-white border-2 border-gray-200 rounded-xl text-lg focus:outline-none focus:border-pine-700 transition-colors"
+                    className="w-full px-3 py-2 bg-transparent border-2 border-gray-900 rounded-md text-lg focus:outline-none"
                     placeholder="Pickleball 3v3"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-bold text-gray-900 uppercase tracking-wider mb-1.5">Location</label>
+                  <label className="block text-lg font-bold text-gray-900 mb-1">Location</label>
                   <input
                     value={draftLocation}
                     onChange={(e) => setDraftLocation(e.target.value)}
-                    className="w-full px-3 py-2.5 bg-white border-2 border-gray-200 rounded-xl text-lg focus:outline-none focus:border-pine-700 transition-colors"
+                    className="w-full px-3 py-2 bg-transparent border-2 border-gray-900 rounded-md text-lg focus:outline-none"
                     placeholder="Anderson Park, College Station"
                   />
                 </div>
@@ -634,61 +663,35 @@ const Calendar = ({ user }) => {
                 <div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-sm font-bold text-gray-900 uppercase tracking-wider mb-1.5">Start</label>
+                      <label className="block text-lg font-bold text-gray-900 mb-1">Start</label>
                       <div className="grid grid-cols-2 gap-2">
-                        <input
-                          type="date"
-                          value={draftDate}
-                          onChange={(e) => setDraftDate(e.target.value)}
-                          className="w-full px-3 py-2 bg-white border-2 border-gray-200 rounded-xl focus:outline-none focus:border-pine-700 transition-colors"
-                        />
-                        <input
-                          type="time"
-                          value={draftStart}
-                          onChange={(e) => setDraftStart(e.target.value)}
-                          className="w-full px-3 py-2 bg-white border-2 border-gray-200 rounded-xl focus:outline-none focus:border-pine-700 transition-colors"
-                        />
+                        <input type="date" value={draftDate} onChange={(e) => setDraftDate(e.target.value)} className="w-full px-3 py-2 bg-transparent border-2 border-gray-900 rounded-md focus:outline-none" />
+                        <input type="time" value={draftStart} onChange={(e) => setDraftStart(e.target.value)} className="w-full px-3 py-2 bg-transparent border-2 border-gray-900 rounded-md focus:outline-none" />
                       </div>
                     </div>
                     <div>
-                      <label className="block text-sm font-bold text-gray-900 uppercase tracking-wider mb-1.5">End</label>
+                      <label className="block text-lg font-bold text-gray-900 mb-1">End</label>
                       <div className="grid grid-cols-2 gap-2">
-                        <input
-                          type="date"
-                          value={draftDate}
-                          onChange={(e) => setDraftDate(e.target.value)}
-                          className="w-full px-3 py-2 bg-white border-2 border-gray-200 rounded-xl focus:outline-none focus:border-pine-700 transition-colors"
-                        />
-                        <input
-                          type="time"
-                          value={draftEnd}
-                          onChange={(e) => setDraftEnd(e.target.value)}
-                          className="w-full px-3 py-2 bg-white border-2 border-gray-200 rounded-xl focus:outline-none focus:border-pine-700 transition-colors"
-                        />
+                        <input type="date" value={draftDate} onChange={(e) => setDraftDate(e.target.value)} className="w-full px-3 py-2 bg-transparent border-2 border-gray-900 rounded-md focus:outline-none" />
+                        <input type="time" value={draftEnd} onChange={(e) => setDraftEnd(e.target.value)} className="w-full px-3 py-2 bg-transparent border-2 border-gray-900 rounded-md focus:outline-none" />
                       </div>
                     </div>
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-bold text-gray-900 uppercase tracking-wider mb-1.5">Details</label>
-                  <div className="border-2 border-gray-200 rounded-xl overflow-hidden focus-within:border-pine-700 transition-colors">
-                    <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-200 bg-gray-50">
-                      <button type="button" className="px-2 py-0.5 rounded-md font-bold text-gray-600 hover:bg-gray-200 transition-colors">
-                        B
-                      </button>
-                      <button type="button" className="px-2 py-0.5 rounded-md italic text-gray-600 hover:bg-gray-200 transition-colors">
-                        I
-                      </button>
-                      <button type="button" className="px-2 py-0.5 rounded-md underline text-gray-600 hover:bg-gray-200 transition-colors">
-                        U
-                      </button>
+                  <label className="block text-lg font-bold text-gray-900 mb-1">Details</label>
+                  <div className="border-2 border-gray-900 rounded-md overflow-hidden">
+                    <div className="flex items-center gap-2 px-3 py-2 border-b-2 border-gray-900 bg-black/0">
+                      <button type="button" className="px-2 py-0.5 border-2 border-gray-900 rounded-md font-bold">B</button>
+                      <button type="button" className="px-2 py-0.5 border-2 border-gray-900 rounded-md italic">I</button>
+                      <button type="button" className="px-2 py-0.5 border-2 border-gray-900 rounded-md underline">U</button>
                     </div>
                     <textarea
                       value={draftDetails}
                       onChange={(e) => setDraftDetails(e.target.value)}
                       rows={5}
-                      className="w-full px-3 py-2 bg-white text-lg focus:outline-none resize-none"
+                      className="w-full px-3 py-2 bg-transparent text-lg focus:outline-none resize-none"
                       placeholder="We can rotate by king of the court..."
                     />
                   </div>
@@ -698,86 +701,81 @@ const Calendar = ({ user }) => {
               {/* Right column */}
               <div className="space-y-4">
                 <div>
-                  <div className="text-sm font-bold text-gray-900 uppercase tracking-wider mb-2">
-                    Which group do you want to invite
-                  </div>
-                  <div className="border-2 border-gray-200 rounded-xl p-3 bg-pine-50/50 max-h-56 overflow-y-auto pr-2 space-y-2">
-                    {groupOptions.map((g) => {
-                      const checked = draftGroups.includes(g);
-                      return (
-                        <label key={g} className="flex items-center justify-between gap-3 cursor-pointer select-none py-1">
-                          <span className="text-base font-medium">{g}</span>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={(e) => {
-                              const next = e.target.checked
-                                ? Array.from(new Set([...draftGroups, g]))
-                                : draftGroups.filter((x) => x !== g);
-                              setDraftGroups(next);
-                            }}
-                            className="h-5 w-5 accent-pine-800 rounded"
-                          />
-                        </label>
-                      );
-                    })}
+                  <div className="text-lg font-bold text-gray-900 mb-2">Which group do you want to invite</div>
+                  <div className="border border-gray-200 rounded-lg p-3 bg-gray-50 max-h-56 overflow-y-auto pr-2 space-y-2">
+                    {groups.length === 0 ? (
+                      <p className="text-gray-500 text-sm">Join a group first to create events.</p>
+                    ) : (
+                      groups.map((g) => {
+                        const checked = draftGroups.includes(g.id);
+                        return (
+                          <label key={g.id} className="flex items-center justify-between gap-3 cursor-pointer select-none">
+                            <span className="text-lg">{g.name}</span>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                const next = e.target.checked
+                                  ? Array.from(new Set([...draftGroups, g.id]))
+                                  : draftGroups.filter((x) => x !== g.id);
+                                setDraftGroups(next);
+                              }}
+                              className="h-5 w-5 accent-indigo-600"
+                            />
+                          </label>
+                        );
+                      })
+                    )}
                   </div>
                 </div>
 
                 <div className="pt-2">
-                  <div className="text-sm font-bold text-gray-900 uppercase tracking-wider">Organizer</div>
-                  <div className="text-base font-medium text-gray-700 mt-0.5">{user?.username ?? 'Unknown'}</div>
+                  <div className="text-lg font-bold text-gray-900">Organizer</div>
+                  <div className="text-lg text-gray-900">{user?.username ?? 'Unknown'}</div>
                 </div>
 
                 {eventError && (
-                  <div className="p-3 rounded-xl bg-red-50 text-red-800 text-sm font-medium border border-red-200">
+                  <div className="p-3 border-2 border-red-700 rounded-md bg-red-50 text-red-800 text-base">
                     {eventError}
                   </div>
                 )}
 
-                <div className="flex justify-end gap-3 pt-4">
+                <div className="flex justify-end gap-3 pt-2">
                   <button
                     type="button"
                     onClick={() => setEventModalOpen(false)}
-                    className="px-5 py-2.5 border-2 border-gray-200 rounded-xl hover:bg-gray-50 text-gray-700 font-semibold transition-colors"
+                    className="px-5 py-2 border-2 border-gray-900 rounded-md hover:bg-black/5 text-gray-900 text-lg font-bold"
                   >
                     Cancel
                   </button>
                   <button
                     type="button"
                     onClick={createEvent}
-                    className="px-5 py-2.5 rounded-xl bg-pine-800 hover:bg-pine-900 text-white font-semibold shadow-sm transition-colors"
+                    disabled={saving}
+                    className="px-5 py-2 border-2 border-gray-900 rounded-md bg-blue-200 hover:bg-blue-300 text-gray-900 text-lg font-bold disabled:opacity-50"
                   >
-                    Create Event
+                    {saving ? 'Creating...' : 'Create'}
                   </button>
                 </div>
-
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Event detail / RSVP modal */}
+      {/* ── Event Detail / RSVP Modal ──────────────────────────────── */}
       {viewingEvent && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
-          onClick={() => setViewingEvent(null)}
-        >
-          <div
-            className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Header strip */}
-            <div className="bg-pine-800 px-6 py-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30" onClick={() => setViewingEvent(null)}>
+          <div className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className={`px-6 py-4 ${eventHeaderBg(viewingEvent)}`}>
               <div className="flex items-start justify-between gap-4">
-                <h3 className="text-xl font-bold text-white leading-snug">{viewingEvent.title}</h3>
-                <button
-                  type="button"
-                  onClick={() => setViewingEvent(null)}
-                  className="text-white/70 hover:text-white text-lg font-bold leading-none mt-0.5 transition-colors"
-                  aria-label="Close"
-                >
+                <div>
+                  <h3 className="text-xl font-bold text-white leading-snug">{viewingEvent.title}</h3>
+                  {!isMine(viewingEvent) && (
+                    <span className="text-xs text-white/80">Someone else&apos;s event</span>
+                  )}
+                </div>
+                <button type="button" onClick={() => setViewingEvent(null)} className="text-white/80 hover:text-white text-lg font-bold leading-none mt-0.5" aria-label="Close">
                   ✕
                 </button>
               </div>
@@ -786,15 +784,15 @@ const Calendar = ({ user }) => {
             <div className="px-6 py-5 space-y-4">
               {/* Date & time */}
               <div className="flex items-start gap-3 text-gray-700">
-                <svg className="w-5 h-5 mt-0.5 shrink-0 text-pine-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-5 h-5 mt-0.5 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 <div>
-                  <div className="font-semibold text-gray-900">
-                    {new Date(viewingEvent.start).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                  <div className="font-medium">
+                    {new Date(viewingEvent.start_time).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
                   </div>
-                  <div className="text-sm text-gray-500 mt-0.5">
-                    {hmLocal(viewingEvent.start)} – {hmLocal(viewingEvent.end)}
+                  <div className="text-sm text-gray-500">
+                    {hmLocal(viewingEvent.start_time)} – {hmLocal(viewingEvent.end_time)}
                   </div>
                 </div>
               </div>
@@ -802,54 +800,70 @@ const Calendar = ({ user }) => {
               {/* Location */}
               {viewingEvent.location && (
                 <div className="flex items-start gap-3 text-gray-700">
-                  <svg className="w-5 h-5 mt-0.5 shrink-0 text-pine-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5 mt-0.5 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                   </svg>
-                  <span className="font-medium">{viewingEvent.location}</span>
+                  <span>{viewingEvent.location}</span>
                 </div>
               )}
 
               {/* Invited groups */}
-              {viewingEvent.inviteGroups?.length > 0 && (
+              {viewingEvent.event_groups?.length > 0 && (
                 <div className="flex items-start gap-3 text-gray-700">
-                  <svg className="w-5 h-5 mt-0.5 shrink-0 text-pine-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5 mt-0.5 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                   </svg>
-                  <span className="font-medium">{viewingEvent.inviteGroups.join(', ')}</span>
+                  <span>
+                    {viewingEvent.event_groups
+                      .map((eg) => groups.find((g) => g.id === eg.group_id)?.name ?? 'Unknown group')
+                      .join(', ')}
+                  </span>
                 </div>
               )}
 
               {/* Details */}
               {viewingEvent.details && (
-                <div className="p-3 bg-pine-50 rounded-xl text-gray-700 text-sm whitespace-pre-wrap border border-pine-100">
+                <div className="p-3 bg-gray-50 rounded-lg text-gray-700 text-sm whitespace-pre-wrap">
                   {viewingEvent.details}
                 </div>
               )}
 
-              {/* RSVP */}
+              {/* RSVP counts */}
+              {(() => {
+                const counts = getRsvpCounts(viewingEvent);
+                const total = counts.going + counts.maybe + counts.notgoing;
+                if (total === 0) return null;
+                return (
+                  <div className="flex gap-4 text-xs text-gray-500">
+                    <span>{counts.going} going</span>
+                    <span>{counts.maybe} maybe</span>
+                    <span>{counts.notgoing} can&apos;t</span>
+                  </div>
+                );
+              })()}
+
+              {/* RSVP buttons */}
               <div>
-                <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Are you down?</div>
+                <div className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">Are you down?</div>
                 <div className="flex gap-2">
                   {[
-                    { key: 'going', label: "I'm Down!", activeClass: 'bg-pine-800 text-white border-pine-800', icon: '🤙' },
+                    { key: 'going', label: "I'm Down!", activeClass: 'bg-green-500 text-white border-green-500', icon: '🤙' },
                     { key: 'maybe', label: 'Maybe', activeClass: 'bg-yellow-400 text-gray-900 border-yellow-400', icon: '🤔' },
-                    { key: 'notgoing', label: "Can't Make It", activeClass: 'bg-gray-900 text-white border-gray-900', icon: '😔' },
+                    { key: 'notgoing', label: "Can't Make It", activeClass: 'bg-red-500 text-white border-red-500', icon: '😔' },
                   ].map(({ key, label, activeClass, icon }) => {
-                    const isActive = viewingEvent.rsvp === key;
+                    const isActive = getUserRsvp(viewingEvent) === key;
                     return (
                       <button
                         key={key}
                         type="button"
                         onClick={() => updateEventRsvp(viewingEvent.id, key)}
                         className={[
-                          'flex-1 py-2.5 px-2 rounded-xl border-2 text-sm font-semibold transition-all text-center',
-                          isActive
-                            ? activeClass
-                            : 'border-gray-200 text-gray-600 hover:border-pine-300 hover:bg-pine-50/50',
+                          'flex-1 py-2 px-2 rounded-lg border-2 text-sm font-semibold transition-all text-center',
+                          isActive ? activeClass : 'border-gray-200 text-gray-600 hover:border-gray-400',
                         ].join(' ')}
                       >
-                        <span className="block text-lg mb-0.5">{icon}</span>
+                        <span className="block text-base">{icon}</span>
                         {label}
                       </button>
                     );
@@ -857,19 +871,18 @@ const Calendar = ({ user }) => {
                 </div>
               </div>
 
-              {/* Delete action */}
-              <div className="flex justify-end pt-3 border-t border-gray-100">
-                <button
-                  type="button"
-                  onClick={() => {
-                    deleteEvent(viewingEvent.id);
-                    setViewingEvent(null);
-                  }}
-                  className="text-red-500 hover:text-red-700 text-sm font-semibold transition-colors"
-                >
-                  Delete Event
-                </button>
-              </div>
+              {/* Delete (only for own events) */}
+              {isMine(viewingEvent) && (
+                <div className="flex justify-end pt-2 border-t border-gray-100">
+                  <button
+                    type="button"
+                    onClick={() => { deleteEvent(viewingEvent.id); setViewingEvent(null); }}
+                    className="text-red-500 hover:text-red-700 text-sm font-medium transition-colors"
+                  >
+                    Delete Event
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
