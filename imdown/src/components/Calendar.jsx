@@ -126,6 +126,16 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     fetchEvents();
   }, [fetchEvents]);
 
+  // Keep the open event-detail modal in sync with the latest events data,
+  // so RSVP updates (and any background refetch) always reflect on screen.
+  useEffect(() => {
+    if (!viewingEvent) return;
+    const fresh = events.find((e) => e.id === viewingEvent.id);
+    if (fresh && fresh !== viewingEvent) {
+      setViewingEvent(fresh);
+    }
+  }, [events]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Event CRUD ──────────────────────────────────────────────────────
 
   const openCreateEvent = () => {
@@ -205,6 +215,26 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     const currentRsvp = existing?.event_rsvps?.find((r) => r.user_id === user.id);
     const isSame = currentRsvp?.status === status;
 
+    const applyRsvpChange = (rsvps = []) => {
+      const without = rsvps.filter((r) => r.user_id !== user.id);
+      if (isSame) return without;
+      return [
+        ...without,
+        { user_id: user.id, status, responded_at: new Date().toISOString() },
+      ];
+    };
+
+    setEvents((prev) =>
+      prev.map((e) =>
+        e.id === eventId ? { ...e, event_rsvps: applyRsvpChange(e.event_rsvps) } : e
+      )
+    );
+    setViewingEvent((prev) =>
+      prev && prev.id === eventId
+        ? { ...prev, event_rsvps: applyRsvpChange(prev.event_rsvps) }
+        : prev
+    );
+
     try {
       if (isSame) {
         await supabase
@@ -223,6 +253,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
       fetchEvents();
     } catch (err) {
       console.error('Failed to update RSVP:', err.message);
+      fetchEvents();
     }
   };
 
