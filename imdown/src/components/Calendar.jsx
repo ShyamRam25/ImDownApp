@@ -60,6 +60,36 @@ function textColorOnBg(backgroundCss) {
   return l > 0.55 ? '#0f172a' : '#ffffff';
 }
 
+/** For week/day time grid: split overlapping events into side-by-side columns. */
+function getDayEventTimeLayouts(events) {
+  if (!events?.length) return new Map();
+  const items = events.map((ev) => ({
+    ev,
+    s: new Date(ev.start_time).getTime(),
+    e: new Date(ev.end_time).getTime(),
+  }));
+  const map = new Map();
+  for (const item of items) {
+    const overlapping = items.filter((o) => o.e > item.s && o.s < item.e);
+    overlapping.sort((a, b) => a.s - b.s || a.e - b.e);
+    const colEnd = [];
+    const idToCol = new Map();
+    for (const o of overlapping) {
+      let c = 0;
+      while (c < colEnd.length && colEnd[c] > o.s) c++;
+      if (c === colEnd.length) colEnd.push(o.e);
+      else colEnd[c] = o.e;
+      idToCol.set(o.ev.id, c);
+    }
+    const ncols = Math.max(1, colEnd.length);
+    const col = idToCol.get(item.ev.id) ?? 0;
+    const leftPct = (col / ncols) * 100;
+    const widthPct = 100 / ncols;
+    map.set(item.ev.id, { col, ncols, leftPct, widthPct });
+  }
+  return map;
+}
+
 const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(null);
@@ -448,6 +478,9 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
 
   const isMine = (ev) => ev.created_by === user?.id;
 
+  /** No `event_groups` rows — private / not shared with a group; no RSVP UI. */
+  const isPersonalEvent = (ev) => !(ev?.event_groups && ev.event_groups.length > 0);
+
   const groupColorById = useMemo(() => {
     const m = new Map();
     for (const g of groups) {
@@ -692,6 +725,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
               <div />
               {weekDates.map((date) => {
                 const dayEvents = eventsForDay(date);
+                const timeLayouts = getDayEventTimeLayouts(dayEvents);
                 const totalHeight = 24 * 48;
                 return (
                   <div key={`events-${ymdLocal(date)}`} className="relative" style={{ height: totalHeight }}>
@@ -700,13 +734,21 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                       const e = new Date(ev.end_time);
                       const top = (minutesIntoDay(s) / 1440) * totalHeight;
                       const height = clamp(((e - s) / (1000 * 60) / 1440) * totalHeight, 18, totalHeight);
+                      const h = timeLayouts.get(ev.id) || { leftPct: 0, widthPct: 100 };
                       return (
                         <button
                           key={ev.id}
                           type="button"
                           onClick={() => openEventDetail(ev)}
-                          className="absolute left-1 right-1 rounded-md text-xs px-2 py-1 shadow pointer-events-auto cursor-pointer overflow-hidden transition-opacity hover:opacity-90"
-                          style={{ top, height, ...getEventTheme(ev) }}
+                          className="absolute rounded-md text-xs px-1.5 py-0.5 shadow pointer-events-auto cursor-pointer overflow-hidden transition-opacity hover:opacity-90"
+                          style={{
+                            top,
+                            height,
+                            left: `calc(${h.leftPct}% + 2px)`,
+                            width: `calc(${h.widthPct}% - 4px)`,
+                            right: 'auto',
+                            ...getEventTheme(ev),
+                          }}
                           title={`${ev.title} · ${hmLocal(s)}–${hmLocal(e)}`}
                         >
                           <div className="font-semibold truncate">{ev.title}</div>
@@ -755,26 +797,38 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
             <div className="absolute inset-0 grid pointer-events-none" style={{ gridTemplateColumns: '64px 1fr' }}>
               <div />
               <div className="relative" style={{ height: 24 * 48 }}>
-                {eventsForDay(selectedDate ?? currentDate).map((ev) => {
-                  const s = new Date(ev.start_time);
-                  const e = new Date(ev.end_time);
+                {(() => {
+                  const dayEvs = eventsForDay(selectedDate ?? currentDate);
+                  const timeLayouts = getDayEventTimeLayouts(dayEvs);
                   const totalHeight = 24 * 48;
-                  const top = (minutesIntoDay(s) / 1440) * totalHeight;
-                  const height = clamp(((e - s) / (1000 * 60) / 1440) * totalHeight, 18, totalHeight);
-                  return (
-                    <button
-                      key={ev.id}
-                      type="button"
-                      onClick={() => openEventDetail(ev)}
-                      className="absolute left-2 right-2 rounded-md text-xs px-2 py-1 shadow pointer-events-auto cursor-pointer overflow-hidden transition-opacity hover:opacity-90"
-                      style={{ top, height, ...getEventTheme(ev) }}
-                      title={`${ev.title} · ${hmLocal(s)}–${hmLocal(e)}`}
-                    >
-                      <div className="font-semibold truncate">{ev.title}</div>
-                      <div className="opacity-90 truncate">{hmLocal(s)}–{hmLocal(e)}</div>
-                    </button>
-                  );
-                })}
+                  return dayEvs.map((ev) => {
+                    const s = new Date(ev.start_time);
+                    const e = new Date(ev.end_time);
+                    const top = (minutesIntoDay(s) / 1440) * totalHeight;
+                    const height = clamp(((e - s) / (1000 * 60) / 1440) * totalHeight, 18, totalHeight);
+                    const h = timeLayouts.get(ev.id) || { leftPct: 0, widthPct: 100 };
+                    return (
+                      <button
+                        key={ev.id}
+                        type="button"
+                        onClick={() => openEventDetail(ev)}
+                        className="absolute rounded-md text-xs px-1.5 py-0.5 shadow pointer-events-auto cursor-pointer overflow-hidden transition-opacity hover:opacity-90"
+                        style={{
+                          top,
+                          height,
+                          left: `calc(${h.leftPct}% + 4px)`,
+                          width: `calc(${h.widthPct}% - 8px)`,
+                          right: 'auto',
+                          ...getEventTheme(ev),
+                        }}
+                        title={`${ev.title} · ${hmLocal(s)}–${hmLocal(e)}`}
+                      >
+                        <div className="font-semibold truncate">{ev.title}</div>
+                        <div className="opacity-90 truncate">{hmLocal(s)}–{hmLocal(e)}</div>
+                      </button>
+                    );
+                  });
+                })()}
               </div>
             </div>
           </div>
@@ -1016,65 +1070,69 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                 </div>
               )}
 
-              {/* Who responded */}
-              {(() => {
-                const byStatus = getRsvpNamesByStatus(viewingEvent);
-                const block = (label, emoji, names, colorClass) => (
-                  <div className="rounded-lg border border-gray-200 overflow-hidden">
-                    <div className={`px-3 py-2 text-xs font-semibold ${colorClass} flex items-center justify-between`}>
-                      <span>{emoji} {label}</span>
-                      <span className="text-gray-500 font-normal">({names.length})</span>
-                    </div>
-                    <ul className="px-3 py-2 text-sm text-gray-800 max-h-32 overflow-y-auto space-y-0.5">
-                      {names.length === 0 ? (
-                        <li className="text-gray-400 text-xs italic">No one yet</li>
-                      ) : (
-                        names.map((name, idx) => (
-                          <li key={`${label}-${idx}-${name}`} className="truncate">{name}</li>
-                        ))
-                      )}
-                    </ul>
-                  </div>
-                );
-                return (
-                  <div className="space-y-2">
-                    <div className="text-sm font-semibold text-gray-600">Who&apos;s down?</div>
-                    <div className="grid gap-2 sm:grid-cols-1">
-                      {block('Going', '🤙', byStatus.going, 'bg-green-50 text-green-900 border-b border-green-100')}
-                      {block('Maybe', '🤔', byStatus.maybe, 'bg-amber-50 text-amber-900 border-b border-amber-100')}
-                      {block("Can't go", '😔', byStatus.notgoing, 'bg-red-50 text-red-900 border-b border-red-100')}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* RSVP buttons */}
-              <div>
-                <div className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">Are you down?</div>
-                <div className="flex gap-2">
-                  {[
-                    { key: 'going', label: "I'm Down!", activeClass: 'bg-green-500 text-white border-green-500', icon: '🤙' },
-                    { key: 'maybe', label: 'Maybe', activeClass: 'bg-yellow-400 text-gray-900 border-yellow-400', icon: '🤔' },
-                    { key: 'notgoing', label: "Can't Make It", activeClass: 'bg-red-500 text-white border-red-500', icon: '😔' },
-                  ].map(({ key, label, activeClass, icon }) => {
-                    const isActive = getUserRsvp(viewingEvent) === key;
-                    return (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => updateEventRsvp(viewingEvent.id, key)}
-                        className={[
-                          'flex-1 py-2 px-2 rounded-lg border-2 text-sm font-semibold transition-all text-center',
-                          isActive ? activeClass : 'border-gray-200 text-gray-600 hover:border-gray-400',
-                        ].join(' ')}
-                      >
-                        <span className="block text-base">{icon}</span>
-                        {label}
-                      </button>
+              {/* RSVP lists + actions — only for events shared with at least one group */}
+              {!isPersonalEvent(viewingEvent) && (
+                <>
+                  {/* Who responded */}
+                  {(() => {
+                    const byStatus = getRsvpNamesByStatus(viewingEvent);
+                    const block = (label, emoji, names, colorClass) => (
+                      <div className="rounded-lg border border-gray-200 overflow-hidden">
+                        <div className={`px-3 py-2 text-xs font-semibold ${colorClass} flex items-center justify-between`}>
+                          <span>{emoji} {label}</span>
+                          <span className="text-gray-500 font-normal">({names.length})</span>
+                        </div>
+                        <ul className="px-3 py-2 text-sm text-gray-800 max-h-32 overflow-y-auto space-y-0.5">
+                          {names.length === 0 ? (
+                            <li className="text-gray-400 text-xs italic">No one yet</li>
+                          ) : (
+                            names.map((name, idx) => (
+                              <li key={`${label}-${idx}-${name}`} className="truncate">{name}</li>
+                            ))
+                          )}
+                        </ul>
+                      </div>
                     );
-                  })}
-                </div>
-              </div>
+                    return (
+                      <div className="space-y-2">
+                        <div className="text-sm font-semibold text-gray-600">Who&apos;s down?</div>
+                        <div className="grid gap-2 sm:grid-cols-1">
+                          {block('Going', '🤙', byStatus.going, 'bg-green-50 text-green-900 border-b border-green-100')}
+                          {block('Maybe', '🤔', byStatus.maybe, 'bg-amber-50 text-amber-900 border-b border-amber-100')}
+                          {block("Can't go", '😔', byStatus.notgoing, 'bg-red-50 text-red-900 border-b border-red-100')}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  <div>
+                    <div className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">Are you down?</div>
+                    <div className="flex gap-2">
+                      {[
+                        { key: 'going', label: "I'm Down!", activeClass: 'bg-green-500 text-white border-green-500', icon: '🤙' },
+                        { key: 'maybe', label: 'Maybe', activeClass: 'bg-yellow-400 text-gray-900 border-yellow-400', icon: '🤔' },
+                        { key: 'notgoing', label: "Can't Make It", activeClass: 'bg-red-500 text-white border-red-500', icon: '😔' },
+                      ].map(({ key, label, activeClass, icon }) => {
+                        const isActive = getUserRsvp(viewingEvent) === key;
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => updateEventRsvp(viewingEvent.id, key)}
+                            className={[
+                              'flex-1 py-2 px-2 rounded-lg border-2 text-sm font-semibold transition-all text-center',
+                              isActive ? activeClass : 'border-gray-200 text-gray-600 hover:border-gray-400',
+                            ].join(' ')}
+                          >
+                            <span className="block text-base">{icon}</span>
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
 
               {/* Delete (only for own events) */}
               {isMine(viewingEvent) && (
