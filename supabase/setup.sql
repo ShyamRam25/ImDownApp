@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS groups (
 );
 
 -- 3. Group members -------------------------------------------
+-- (color is per user per group — how this member sees the group on their calendar)
 
 CREATE TABLE IF NOT EXISTS group_members (
   id        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -53,6 +54,9 @@ CREATE TABLE IF NOT EXISTS group_members (
   joined_at timestamptz DEFAULT now(),
   UNIQUE (group_id, user_id)
 );
+
+ALTER TABLE group_members
+  ADD COLUMN IF NOT EXISTS color text NOT NULL DEFAULT '#6366f1';
 
 -- 4. Events --------------------------------------------------
 
