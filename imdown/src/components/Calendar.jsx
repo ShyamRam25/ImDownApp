@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
 const VIEW_STORAGE_KEY = 'imdown_calendar_view';
+const MODE_STORAGE_KEY = 'imdown_calendar_mode';
 const HIDDEN_EVENTS_KEY_PREFIX = 'imdown_hidden_events_';
 const DISMISSED_NOTIFS_KEY_PREFIX = 'imdown_dismissed_notifs_';
 
@@ -38,6 +39,34 @@ const writeDismissedNotifIds = (userId, set) => {
   writeIdSet(`${DISMISSED_NOTIFS_KEY_PREFIX}${userId}`, set);
 };
 
+// Per-viewer overrides for People-mode coloring. Shape:
+//   { [groupId]: { [memberUserId]: '#rrggbb' } }
+// These are local to the viewer; they don't change `group_members.color`
+// in the database, so other users' calendars are unaffected.
+const PEOPLE_COLORS_KEY_PREFIX = 'imdown_people_colors_';
+
+const readPeopleColorOverrides = (userId) => {
+  if (!userId) return {};
+  try {
+    const raw = localStorage.getItem(`${PEOPLE_COLORS_KEY_PREFIX}${userId}`);
+    if (!raw) return {};
+    const obj = JSON.parse(raw);
+    return obj && typeof obj === 'object' ? obj : {};
+  } catch {
+    return {};
+  }
+};
+
+const writePeopleColorOverrides = (userId, obj) => {
+  if (!userId) return;
+  try {
+    localStorage.setItem(
+      `${PEOPLE_COLORS_KEY_PREFIX}${userId}`,
+      JSON.stringify(obj)
+    );
+  } catch { /* ignore */ }
+};
+
 const pad2 = (n) => String(n).padStart(2, '0');
 
 const ymdLocal = (date) => {
@@ -54,6 +83,26 @@ const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 
 const DEFAULT_GROUP_COLOR = '#6366f1';
 const PERSONAL_EVENT_COLOR = '#64748b';
+const FORMER_MEMBER_COLOR = '#94a3b8';
+
+// Deterministic fallback palette used when a group member doesn't have a
+// color set in `group_members.color`. Picked by hashing the user id so the
+// same user always gets the same color across reloads.
+const MEMBER_FALLBACK_PALETTE = [
+  '#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16',
+  '#22c55e', '#10b981', '#14b8a6', '#06b6d4', '#0ea5e9',
+  '#3b82f6', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef',
+  '#ec4899', '#f43f5e',
+];
+
+function paletteColorFor(id) {
+  const s = String(id ?? '');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  }
+  return MEMBER_FALLBACK_PALETTE[h % MEMBER_FALLBACK_PALETTE.length];
+}
 
 function normalizeHex(c) {
   if (!c || typeof c !== 'string') return null;
@@ -102,11 +151,17 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     const stored = localStorage.getItem(VIEW_STORAGE_KEY);
     return stored === 'week' || stored === 'day' || stored === 'month' ? stored : 'month';
   });
+  const [mode, setMode] = useState(() => {
+    const stored = localStorage.getItem(MODE_STORAGE_KEY);
+    return stored === 'people' ? 'people' : 'groups';
+  });
+  const [groupMembers, setGroupMembers] = useState([]);
 
   const [events, setEvents] = useState([]);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [hiddenEventIds, setHiddenEventIds] = useState(() => readHiddenEventIds(user?.id));
   const [dismissedNotifIds, setDismissedNotifIds] = useState(() => readDismissedNotifIds(user?.id));
+  const [peopleColorOverrides, setPeopleColorOverrides] = useState(() => readPeopleColorOverrides(user?.id));
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const notificationsRef = useRef(null);
 
@@ -228,12 +283,57 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     fetchEvents();
   }, [fetchEvents]);
 
-  // Re-load the per-user "hidden events" and "dismissed notifications" sets
-  // whenever the logged-in user changes.
+  // Re-load the per-user "hidden events", "dismissed notifications", and
+  // People-mode color overrides whenever the logged-in user changes.
   useEffect(() => {
     setHiddenEventIds(readHiddenEventIds(user?.id));
     setDismissedNotifIds(readDismissedNotifIds(user?.id));
+    setPeopleColorOverrides(readPeopleColorOverrides(user?.id));
   }, [user?.id]);
+
+  // Auto-reset mode to 'groups' whenever we leave a specific-group view,
+  // since People mode is only meaningful when a single group is selected.
+  useEffect(() => {
+    if (selectedGroupId === 'all' && mode !== 'groups') {
+      setMode('groups');
+      localStorage.setItem(MODE_STORAGE_KEY, 'groups');
+    }
+  }, [selectedGroupId, mode]);
+
+  // Fetch members of the selected group when we need them for People mode
+  // (used for legend + per-creator color resolution). Clear otherwise.
+  useEffect(() => {
+    let cancelled = false;
+    if (selectedGroupId === 'all' || mode !== 'people' || !user?.id) {
+      setGroupMembers([]);
+      return () => { cancelled = true; };
+    }
+
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('group_members')
+          .select('user_id, color, users(username)')
+          .eq('group_id', selectedGroupId);
+
+        if (error) throw error;
+        if (cancelled) return;
+
+        const rows = (data || []).map((row) => ({
+          user_id: row.user_id,
+          username: row.users?.username || 'Unknown',
+          color: normalizeHex(row.color) || paletteColorFor(row.user_id),
+        }));
+        rows.sort((a, b) => a.username.localeCompare(b.username));
+        setGroupMembers(rows);
+      } catch (err) {
+        console.error('Failed to fetch group members:', err.message);
+        if (!cancelled) setGroupMembers([]);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [selectedGroupId, mode, user?.id]);
 
   // Close the notifications popover on outside click / Escape key.
   useEffect(() => {
@@ -468,6 +568,12 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     }
   };
 
+  const handleModeChange = (nextMode) => {
+    if (nextMode !== 'groups' && nextMode !== 'people') return;
+    setMode(nextMode);
+    localStorage.setItem(MODE_STORAGE_KEY, nextMode);
+  };
+
   // ── Derived data ────────────────────────────────────────────────────
 
   const visibleStart = useMemo(() => {
@@ -558,22 +664,92 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     return m;
   }, [groups]);
 
+  // Effective color per member in the selected group: a per-viewer override
+  // wins over the member's own color, which in turn beats the deterministic
+  // palette fallback already encoded in groupMembers.
+  const memberColorById = useMemo(() => {
+    const m = new Map();
+    const overrides =
+      selectedGroupId !== 'all'
+        ? (peopleColorOverrides?.[selectedGroupId] || {})
+        : {};
+    for (const mem of groupMembers) {
+      const override = normalizeHex(overrides[mem.user_id]);
+      m.set(mem.user_id, override || mem.color);
+    }
+    return m;
+  }, [groupMembers, peopleColorOverrides, selectedGroupId]);
+
+  const hasPersonColorOverride = (memberUserId) => {
+    if (selectedGroupId === 'all') return false;
+    const bucket = peopleColorOverrides?.[selectedGroupId];
+    return Boolean(bucket && bucket[memberUserId]);
+  };
+
+  const setPersonColor = (memberUserId, hex) => {
+    if (selectedGroupId === 'all' || !user?.id) return;
+    const normalized = normalizeHex(hex);
+    if (!normalized) return;
+    setPeopleColorOverrides((prev) => {
+      const next = { ...(prev || {}) };
+      const bucket = { ...(next[selectedGroupId] || {}) };
+      bucket[memberUserId] = normalized;
+      next[selectedGroupId] = bucket;
+      writePeopleColorOverrides(user.id, next);
+      return next;
+    });
+  };
+
+  const resetPersonColor = (memberUserId) => {
+    if (selectedGroupId === 'all' || !user?.id) return;
+    setPeopleColorOverrides((prev) => {
+      const next = { ...(prev || {}) };
+      const bucket = { ...(next[selectedGroupId] || {}) };
+      if (!(memberUserId in bucket)) return prev;
+      delete bucket[memberUserId];
+      if (Object.keys(bucket).length === 0) {
+        delete next[selectedGroupId];
+      } else {
+        next[selectedGroupId] = bucket;
+      }
+      writePeopleColorOverrides(user.id, next);
+      return next;
+    });
+  };
+
+  // Resolve the base color for an event based on the active mode.
+  //   - People mode (only valid when a specific group is selected): the event
+  //     creator's color in that group, falling back to a neutral gray for
+  //     creators who are no longer members.
+  //   - Groups mode + specific group: that group's color.
+  //   - Groups mode + All Groups: the first event_groups entry whose group is
+  //     among the user's groups, falling back to the personal event color
+  //     when the event has no group links at all.
+  const resolveEventBaseColor = (ev) => {
+    const links = Array.isArray(ev.event_groups) ? ev.event_groups : [];
+
+    if (mode === 'people' && selectedGroupId !== 'all') {
+      return memberColorById.get(ev.created_by) || FORMER_MEMBER_COLOR;
+    }
+
+    if (selectedGroupId !== 'all') {
+      return groupColorById.get(selectedGroupId) || DEFAULT_GROUP_COLOR;
+    }
+
+    if (links.length === 0) return PERSONAL_EVENT_COLOR;
+    const sorted = [...links].sort((a, b) =>
+      String(a.group_id).localeCompare(String(b.group_id))
+    );
+    for (const link of sorted) {
+      const c = normalizeHex(groupColorById.get(link.group_id));
+      if (c) return c;
+    }
+    return DEFAULT_GROUP_COLOR;
+  };
+
   const getEventTheme = (ev) => {
     const mine = isMine(ev);
-    const links = Array.isArray(ev.event_groups) ? ev.event_groups : [];
-    let baseHex = PERSONAL_EVENT_COLOR;
-    if (links.length > 0) {
-      const sorted = [...links].sort((a, b) => String(a.group_id).localeCompare(String(b.group_id)));
-      let picked = null;
-      for (const link of sorted) {
-        const c = normalizeHex(groupColorById.get(link.group_id));
-        if (c) {
-          picked = c;
-          break;
-        }
-      }
-      baseHex = picked || DEFAULT_GROUP_COLOR;
-    }
+    const baseHex = resolveEventBaseColor(ev);
     const backgroundColor = mine ? baseHex : mixWithWhite(baseHex, 0.38);
     return {
       backgroundColor,
@@ -620,7 +796,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
           <button onClick={goToToday} className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm font-medium">
             Today
           </button>
-          <button onClick={openCreateEvent} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium">
+          <button onClick={openCreateEvent} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium whitespace-nowrap">
             + Event
           </button>
           <div className="inline-flex rounded-lg bg-gray-100 p-1">
@@ -641,6 +817,32 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
               );
             })}
           </div>
+
+          {selectedGroupId !== 'all' && (
+            <div
+              className="inline-flex rounded-lg bg-gray-100 p-1"
+              role="group"
+              aria-label="Color events by"
+            >
+              {['groups', 'people'].map((m) => {
+                const active = mode === m;
+                return (
+                  <button
+                    key={m}
+                    onClick={() => handleModeChange(m)}
+                    className={[
+                      'px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
+                      active ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900',
+                    ].join(' ')}
+                    aria-pressed={active}
+                    title={m === 'groups' ? 'Color events by group' : 'Color events by person in this group'}
+                  >
+                    {m === 'groups' ? 'Groups' : 'People'}
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           {/* Notifications bell + popover */}
           <div className="relative" ref={notificationsRef}>
@@ -747,12 +949,112 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
         </button>
       </div>
 
+      {/* Color legend: reflects the active mode (groups vs people).
+          In People mode each swatch is a color picker so the viewer can
+          recolor anyone in this group; per-viewer overrides are persisted
+          locally and don't affect anyone else's calendar. */}
+      {(() => {
+        let items = [];
+        let label = '';
+        const isPeople = mode === 'people' && selectedGroupId !== 'all';
+
+        if (isPeople) {
+          label = 'People';
+          items = groupMembers.map((m) => {
+            const color = memberColorById.get(m.user_id) || m.color;
+            return {
+              key: `person-${m.user_id}`,
+              userId: m.user_id,
+              color,
+              name: m.user_id === user?.id ? `${m.username} (you)` : m.username,
+              editable: true,
+            };
+          });
+        } else if (selectedGroupId !== 'all') {
+          const g = groups.find((x) => x.id === selectedGroupId);
+          label = 'Group';
+          items = g
+            ? [{
+                key: `group-${g.id}`,
+                color: normalizeHex(g.color) || DEFAULT_GROUP_COLOR,
+                name: g.name,
+                editable: false,
+              }]
+            : [];
+        } else {
+          label = 'Groups';
+          items = groups.map((g) => ({
+            key: `group-${g.id}`,
+            color: normalizeHex(g.color) || DEFAULT_GROUP_COLOR,
+            name: g.name,
+            editable: false,
+          }));
+        }
+
+        if (items.length === 0) return null;
+
+        return (
+          <div className="mb-4 flex items-center flex-wrap gap-x-4 gap-y-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+              {label}
+            </span>
+            <ul className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {items.map((it) => {
+                if (!it.editable) {
+                  return (
+                    <li key={it.key} className="flex items-center gap-1.5 text-xs text-gray-700">
+                      <span
+                        aria-hidden="true"
+                        className="inline-block w-3 h-3 rounded-sm border border-black/10"
+                        style={{ backgroundColor: it.color }}
+                      />
+                      <span className="truncate max-w-[12rem]">{it.name}</span>
+                    </li>
+                  );
+                }
+
+                const overridden = hasPersonColorOverride(it.userId);
+                return (
+                  <li key={it.key} className="flex items-center gap-1.5 text-xs text-gray-700">
+                    <label
+                      className="relative inline-block w-3 h-3 rounded-sm border border-black/10 cursor-pointer hover:ring-2 hover:ring-black/20"
+                      style={{ backgroundColor: it.color }}
+                      title={`Change color for ${it.name}`}
+                    >
+                      <input
+                        type="color"
+                        value={normalizeHex(it.color) || DEFAULT_GROUP_COLOR}
+                        onChange={(e) => setPersonColor(it.userId, e.target.value)}
+                        className="absolute inset-0 opacity-0 cursor-pointer"
+                        aria-label={`Change color for ${it.name}`}
+                      />
+                    </label>
+                    <span className="truncate max-w-[12rem]">{it.name}</span>
+                    {overridden && (
+                      <button
+                        type="button"
+                        onClick={() => resetPersonColor(it.userId)}
+                        className="text-[10px] font-medium text-gray-400 hover:text-gray-700"
+                        title="Reset to default color"
+                        aria-label={`Reset color for ${it.name}`}
+                      >
+                        reset
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        );
+      })()}
+
       {eventsLoading && (
         <div className="text-center py-2 text-sm text-gray-400">Loading events...</div>
       )}
 
-      {/* Day-name header row (month + week views) */}
-      {view !== 'day' && (
+      {/* Day-name header row (month view only; week view has its own header). */}
+      {view === 'month' && (
         <div className="grid gap-1 mb-1" style={{ gridTemplateColumns: 'repeat(7, minmax(0, 1fr))' }}>
           {dayNames.map((day) => (
             <div key={day} className="text-center text-sm font-semibold text-gray-600 py-2">{day}</div>
@@ -838,7 +1140,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
       )}
 
       {/* ── Week view ──────────────────────────────────────────────── */}
-      {view === 'week' && (
+      {view === 'week' && !(mode === 'people' && selectedGroupId !== 'all') && (
         <div className="border border-gray-200 rounded-lg overflow-hidden">
           <div className="grid" style={{ gridTemplateColumns: '64px repeat(7, minmax(0, 1fr))' }}>
             <div className="bg-white border-b border-gray-200" />
@@ -917,8 +1219,119 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
         </div>
       )}
 
+      {/* ── Week view (People mode): rows = people, columns = days ───── */}
+      {view === 'week' && mode === 'people' && selectedGroupId !== 'all' && (
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          {/* Day header */}
+          <div
+            className="grid bg-gray-50"
+            style={{ gridTemplateColumns: '160px repeat(7, minmax(0, 1fr))' }}
+          >
+            <div className="px-3 py-2 border-b border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              Person
+            </div>
+            {weekDates.map((date) => {
+              const isCurrentDay = isToday(date);
+              const isSelectedDay = isSelected(date);
+              return (
+                <button
+                  key={`pweekhead-${date.toISOString()}`}
+                  type="button"
+                  onClick={() => handleDateClick(date)}
+                  className={[
+                    'py-2 border-b border-l border-gray-200 text-center transition-colors',
+                    isSelectedDay ? 'bg-blue-50' : 'hover:bg-gray-100',
+                  ].join(' ')}
+                >
+                  <div className="text-xs font-semibold text-gray-600">{dayNames[date.getDay()]}</div>
+                  <div
+                    className={[
+                      'mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-full text-sm font-bold',
+                      isSelectedDay
+                        ? 'bg-blue-500 text-white'
+                        : isCurrentDay
+                        ? 'bg-blue-100 text-blue-700'
+                        : 'text-gray-800',
+                    ].join(' ')}
+                  >
+                    {date.getDate()}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Person rows */}
+          {groupMembers.length === 0 ? (
+            <div className="px-4 py-6 text-center text-sm text-gray-500">
+              No members in this group yet.
+            </div>
+          ) : (
+            groupMembers.map((m) => {
+              const memberColor = memberColorById.get(m.user_id) || m.color;
+              return (
+                <div
+                  key={`pweekrow-${m.user_id}`}
+                  className="grid border-t border-gray-100"
+                  style={{ gridTemplateColumns: '160px repeat(7, minmax(0, 1fr))' }}
+                >
+                  <div className="px-3 py-2 flex items-center gap-2 bg-gray-50/40 border-r border-gray-200">
+                    <span
+                      aria-hidden="true"
+                      className="inline-block w-3 h-3 rounded-sm border border-black/10 shrink-0"
+                      style={{ backgroundColor: memberColor }}
+                    />
+                    <span className="text-sm font-medium text-gray-800 truncate">
+                      {m.user_id === user?.id ? `${m.username} (you)` : m.username}
+                    </span>
+                  </div>
+                  {weekDates.map((date) => {
+                    const dayStart = startOfDay(date).getTime();
+                    const dayEnd = addDays(startOfDay(date), 1).getTime();
+                    const dayEvents = eventsInRange
+                      .filter((ev) => {
+                        if (ev.created_by !== m.user_id) return false;
+                        const s = new Date(ev.start_time).getTime();
+                        const en = new Date(ev.end_time).getTime();
+                        return en > dayStart && s < dayEnd;
+                      })
+                      .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+                    return (
+                      <div
+                        key={`pweekcell-${m.user_id}-${ymdLocal(date)}`}
+                        className="border-l border-gray-100 p-1 min-h-[64px] flex flex-col gap-1"
+                      >
+                        {dayEvents.length === 0 ? (
+                          <span className="m-auto text-[10px] uppercase tracking-wide text-gray-300">
+                            free
+                          </span>
+                        ) : (
+                          dayEvents.map((ev) => (
+                            <button
+                              key={ev.id}
+                              type="button"
+                              onClick={() => openEventDetail(ev)}
+                              className="w-full truncate text-left rounded px-1.5 py-0.5 text-[11px] leading-tight transition-opacity hover:opacity-90"
+                              style={getEventTheme(ev)}
+                              title={`${ev.title} · ${hmLocal(ev.start_time)}–${hmLocal(ev.end_time)}`}
+                            >
+                              <span className="opacity-90 mr-1">{hmLocal(ev.start_time)}</span>
+                              <span className="font-semibold">{ev.title}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+
       {/* ── Day view ───────────────────────────────────────────────── */}
-      {view === 'day' && (
+      {view === 'day' && !(mode === 'people' && selectedGroupId !== 'all') && (
         <div className="border border-gray-200 rounded-lg overflow-hidden">
           <div className="grid" style={{ gridTemplateColumns: '64px 1fr' }}>
             <div className="bg-white border-b border-gray-200" />
@@ -975,6 +1388,121 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
           </div>
         </div>
       )}
+
+      {/* ── Day view (People mode): rows = people, x-axis = hours ───── */}
+      {view === 'day' && mode === 'people' && selectedGroupId !== 'all' && (() => {
+        const focusDate = selectedDate ?? currentDate;
+        const dayStartMs = startOfDay(focusDate).getTime();
+        const dayEndMs = addDays(startOfDay(focusDate), 1).getTime();
+        return (
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <div
+              className="grid bg-gray-50"
+              style={{ gridTemplateColumns: '160px 1fr' }}
+            >
+              <div className="px-3 py-2 border-b border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                Person
+              </div>
+              <div className="border-b border-l border-gray-200 relative h-9">
+                {Array.from({ length: 24 }, (_, hour) => (
+                  <div
+                    key={`pdh-${hour}`}
+                    className="absolute top-0 bottom-0 border-l border-gray-100 text-[10px] text-gray-400"
+                    style={{ left: `${(hour / 24) * 100}%`, width: `${100 / 24}%` }}
+                  >
+                    <span className="absolute top-1 left-1 whitespace-nowrap">
+                      {hour === 0
+                        ? ''
+                        : `${hour % 12 === 0 ? 12 : hour % 12}${hour < 12 ? 'a' : 'p'}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {groupMembers.length === 0 ? (
+              <div className="px-4 py-6 text-center text-sm text-gray-500">
+                No members in this group yet.
+              </div>
+            ) : (
+              groupMembers.map((m) => {
+                const memberColor = memberColorById.get(m.user_id) || m.color;
+                const memberEvents = eventsInRange
+                  .filter((ev) => {
+                    if (ev.created_by !== m.user_id) return false;
+                    const s = new Date(ev.start_time).getTime();
+                    const en = new Date(ev.end_time).getTime();
+                    return en > dayStartMs && s < dayEndMs;
+                  })
+                  .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+                return (
+                  <div
+                    key={`pdayrow-${m.user_id}`}
+                    className="grid border-t border-gray-100"
+                    style={{ gridTemplateColumns: '160px 1fr' }}
+                  >
+                    <div className="px-3 py-2 flex items-center gap-2 bg-gray-50/40 border-r border-gray-200">
+                      <span
+                        aria-hidden="true"
+                        className="inline-block w-3 h-3 rounded-sm border border-black/10 shrink-0"
+                        style={{ backgroundColor: memberColor }}
+                      />
+                      <span className="text-sm font-medium text-gray-800 truncate">
+                        {m.user_id === user?.id ? `${m.username} (you)` : m.username}
+                      </span>
+                    </div>
+                    <div className="relative h-12 border-l border-gray-100 bg-white">
+                      {/* Hour grid lines */}
+                      {Array.from({ length: 24 }, (_, hour) => (
+                        <div
+                          key={`pdaygrid-${m.user_id}-${hour}`}
+                          aria-hidden="true"
+                          className="absolute top-0 bottom-0 border-l border-gray-100"
+                          style={{ left: `${(hour / 24) * 100}%` }}
+                        />
+                      ))}
+                      {memberEvents.map((ev) => {
+                        const s = new Date(ev.start_time);
+                        const e = new Date(ev.end_time);
+                        const startMin = clamp(
+                          s.getTime() < dayStartMs ? 0 : minutesIntoDay(s),
+                          0,
+                          1440
+                        );
+                        const endMin = clamp(
+                          e.getTime() >= dayEndMs ? 1440 : minutesIntoDay(e),
+                          startMin + 5,
+                          1440
+                        );
+                        const left = (startMin / 1440) * 100;
+                        const width = ((endMin - startMin) / 1440) * 100;
+                        return (
+                          <button
+                            key={ev.id}
+                            type="button"
+                            onClick={() => openEventDetail(ev)}
+                            className="absolute top-1 bottom-1 rounded-md text-[10px] px-1.5 shadow overflow-hidden transition-opacity hover:opacity-90 text-left"
+                            style={{
+                              left: `${left}%`,
+                              width: `${width}%`,
+                              ...getEventTheme(ev),
+                            }}
+                            title={`${ev.title} · ${hmLocal(s)}–${hmLocal(e)}`}
+                          >
+                            <span className="font-semibold truncate block">
+                              {ev.title}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        );
+      })()}
 
       {/* Selected Date Display */}
       {selectedDate && (
