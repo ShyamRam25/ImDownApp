@@ -85,26 +85,19 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-8 px-4">
+    <div className="min-h-screen bg-dark py-6 px-4">
       <div className="container mx-auto">
         {/* Header */}
-        <div className="flex justify-between items-center mb-8 flex-wrap gap-4">
+        <div className="flex justify-between items-center mb-6 flex-wrap gap-4 bg-dark-50 border border-dark-200 rounded-2xl px-6 py-4">
           <img
             src="/images/LogoPhoto.png"
             alt="ImDown"
-            className="h-16 w-auto rounded-2xl"
-            style={{
-              WebkitMaskImage:
-                'radial-gradient(ellipse at center, black 55%, transparent 95%)',
-              maskImage:
-                'radial-gradient(ellipse at center, black 55%, transparent 95%)',
-            }}
+            className="h-14 w-auto rounded-xl"
           />
 
           <div className="flex items-center gap-3 flex-wrap">
-            {/* Group selector */}
             <div className="flex items-center gap-2">
-              <label htmlFor="group-select" className="text-sm font-medium text-gray-600">
+              <label htmlFor="group-select" className="text-sm font-medium text-gray-400 tracking-tight">
                 Group:
               </label>
               <select
@@ -112,7 +105,7 @@ function App() {
                 value={selectedGroupId}
                 onChange={(e) => handleGroupChange(e.target.value)}
                 disabled={groupsLoading}
-                className="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="input-field py-2 px-3 text-sm font-medium w-auto"
               >
                 <option value="all">All Groups</option>
                 {groups.map((g) => (
@@ -123,24 +116,24 @@ function App() {
 
             <button
               onClick={() => setShowGroupManager(true)}
-              className="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+              className="btn-secondary text-sm"
             >
               Manage Groups
             </button>
 
             <button
               onClick={() => setShowGcalImport(true)}
-              className="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+              className="btn-secondary text-sm"
             >
               Import Google Cal
             </button>
 
-            <span className="text-gray-700">
-              Welcome, <strong>{user.username}</strong>!
+            <span className="text-gray-400 tracking-tight">
+              Welcome, <strong className="text-neon-200">{user.username}</strong>!
             </span>
             <button
               onClick={handleLogout}
-              className="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition-colors"
+              className="btn-danger text-sm"
             >
               Logout
             </button>

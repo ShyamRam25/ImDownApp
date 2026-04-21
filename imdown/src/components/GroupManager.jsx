@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
-const DEFAULT_GROUP_COLOR = '#6366f1';
+const DEFAULT_GROUP_COLOR = '#00E676';
 
 const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
   const [tab, setTab] = useState('mine'); // 'mine' | 'create' | 'join' | 'invite'
@@ -220,29 +220,29 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60" onClick={onClose}>
       <div
-        className="w-full max-w-lg bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden"
+        className="w-full max-w-lg bg-dark-50 rounded-2xl shadow-2xl border border-dark-300 overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <h2 className="text-xl font-bold text-gray-900">Groups</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg font-bold">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-dark-300">
+          <h2 className="text-xl font-bold text-gray-100">Groups</h2>
+          <button onClick={onClose} className="btn-ghost px-2 py-1 text-gray-500 hover:text-gray-200">
             ✕
           </button>
         </div>
 
         {/* Tab bar */}
-        <div className="flex border-b border-gray-200">
+        <div className="flex border-b border-dark-300">
           {tabs.map((t) => (
             <button
               key={t.key}
               onClick={() => { setTab(t.key); setMessage({ type: '', text: '' }); }}
               className={[
-                'flex-1 py-3 text-sm font-medium text-center transition-colors',
+                'flex-1 py-3 text-sm font-semibold tracking-tight text-center transition-all duration-150',
                 tab === t.key
-                  ? 'text-indigo-600 border-b-2 border-indigo-600'
-                  : 'text-gray-500 hover:text-gray-700',
+                  ? 'text-neon border-b-2 border-neon'
+                  : 'text-gray-500 hover:text-gray-300',
               ].join(' ')}
             >
               {t.label}
@@ -252,8 +252,8 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
 
         <div className="px-6 py-5 space-y-4 max-h-96 overflow-y-auto">
           {message.text && (
-            <div className={`p-3 rounded-lg text-sm ${
-              message.type === 'error' ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'
+            <div className={`p-3 rounded-xl text-sm font-medium ${
+              message.type === 'error' ? 'bg-red-500/10 border border-red-500/30 text-red-400' : 'bg-neon/10 border border-neon/30 text-neon'
             }`}>
               {message.text}
             </div>
@@ -266,17 +266,17 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
             ) : (
               <ul className="space-y-2">
                 {groups.map((g) => (
-                  <li key={g.id} className="flex flex-wrap items-center justify-between gap-2 p-3 bg-gray-50 rounded-lg">
-                    <span className="font-medium text-gray-800">{g.name}</span>
+                  <li key={g.id} className="flex flex-wrap items-center justify-between gap-2 p-3 bg-dark-100 border border-dark-300 rounded-lg">
+                    <span className="font-medium text-gray-200">{g.name}</span>
                     <div className="flex items-center gap-2">
-                      <label className="flex items-center gap-1.5 text-xs text-gray-600">
+                      <label className="flex items-center gap-1.5 text-xs text-gray-500">
                         <span>Color</span>
                         <input
                           type="color"
                           value={g.color || DEFAULT_GROUP_COLOR}
                           onChange={(e) => handleUpdateGroupColor(g.id, e.target.value)}
                           disabled={loading}
-                          className="h-8 w-10 cursor-pointer rounded border border-gray-300 bg-white p-0.5 disabled:opacity-50"
+                          className="h-8 w-10 cursor-pointer rounded border border-dark-400 bg-dark-200 p-0.5 disabled:opacity-50"
                           title="Your color for this group on your calendar"
                         />
                       </label>
@@ -284,7 +284,7 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
                         type="button"
                         onClick={() => handleLeave(g.id, g.name)}
                         disabled={loading}
-                        className="text-sm text-red-500 hover:text-red-700 font-medium disabled:opacity-50"
+                        className="btn-danger text-xs py-1 px-3"
                       >
                         Leave
                       </button>
@@ -297,25 +297,25 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
 
           {/* Create tab */}
           {tab === 'create' && (
-            <div className="space-y-3">
+            <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Group Name</label>
+                <label className="input-label">Group Name</label>
                 <input
                   value={newGroupName}
                   onChange={(e) => setNewGroupName(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  className="input-field"
                   placeholder="e.g. Friday Frisbee Crew"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Calendar color</label>
+                <label className="input-label">Calendar color</label>
                 <div className="flex items-center gap-3">
                   <input
                     type="color"
                     value={newGroupColor}
                     onChange={(e) => setNewGroupColor(e.target.value)}
-                    className="h-10 w-14 cursor-pointer rounded border border-gray-300 bg-white p-1"
+                    className="h-10 w-14 cursor-pointer rounded-xl border border-dark-400 bg-dark-200 p-1"
                   />
                   <span className="text-xs text-gray-500">Only affects your calendar — others pick their own color.</span>
                 </div>
@@ -323,7 +323,7 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
               <button
                 onClick={handleCreate}
                 disabled={loading || !newGroupName.trim()}
-                className="w-full px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                className="btn-primary w-full"
               >
                 {loading ? 'Creating...' : 'Create Group'}
               </button>
@@ -336,7 +336,7 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
               <input
                 value={joinSearch}
                 onChange={(e) => setJoinSearch(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="input-field"
                 placeholder="Search groups by name..."
               />
               {availableGroups.length === 0 && joinSearch.trim() && !loading && (
@@ -344,12 +344,12 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
               )}
               <ul className="space-y-2">
                 {availableGroups.map((g) => (
-                  <li key={g.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                    <span className="font-medium text-gray-800">{g.name}</span>
+                  <li key={g.id} className="flex items-center justify-between p-3 bg-dark-100 border border-dark-300 rounded-xl">
+                    <span className="font-medium text-gray-200">{g.name}</span>
                     <button
                       onClick={() => handleJoin(g.id, g.name)}
                       disabled={loading}
-                      className="text-sm px-3 py-1 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                      className="btn-primary text-sm py-1.5 px-4"
                     >
                       Join
                     </button>
@@ -364,13 +364,13 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
             groups.length === 0 ? (
               <p className="text-gray-500 text-center py-4">Join or create a group first, then you can invite others by username.</p>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Group</label>
+                  <label className="input-label">Group</label>
                   <select
                     value={inviteGroupId}
                     onChange={(e) => setInviteGroupId(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white"
+                    className="input-field"
                   >
                     {groups.map((g) => (
                       <option key={g.id} value={g.id}>{g.name}</option>
@@ -378,19 +378,19 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                  <label className="input-label">Username</label>
                   <input
                     value={inviteUsername}
                     onChange={(e) => setInviteUsername(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSendInvite()}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    className="input-field"
                     placeholder="Exact username (case-sensitive)"
                   />
                 </div>
                 <button
                   onClick={handleSendInvite}
                   disabled={loading || !inviteUsername.trim()}
-                  className="w-full px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                  className="btn-primary w-full"
                 >
                   {loading ? 'Sending…' : 'Send invitation'}
                 </button>
