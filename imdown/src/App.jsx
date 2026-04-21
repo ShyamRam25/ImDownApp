@@ -3,6 +3,7 @@ import { supabase } from './lib/supabase'
 import Calendar from './components/Calendar'
 import Login from './components/Login'
 import GroupManager from './components/GroupManager'
+import GroupInvitations from './components/GroupInvitations'
 import GoogleCalendarImport from './components/GoogleCalendarImport'
 import './App.css'
 
@@ -36,13 +37,13 @@ function App() {
     try {
       const { data, error } = await supabase
         .from('group_members')
-        .select('group_id, groups(id, name)')
+        .select('role, groups(id, name)')
         .eq('user_id', user.id)
 
       if (error) throw error
 
       const userGroups = (data || [])
-        .map((row) => row.groups)
+        .map((row) => (row.groups ? { ...row.groups, role: row.role } : null))
         .filter(Boolean)
       setGroups(userGroups)
 
@@ -145,6 +146,8 @@ function App() {
             </button>
           </div>
         </div>
+
+        <GroupInvitations user={user} onInvitationsChanged={fetchGroups} />
 
         <Calendar
           user={user}
