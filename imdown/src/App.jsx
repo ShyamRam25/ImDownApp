@@ -37,13 +37,13 @@ function App() {
     try {
       const { data, error } = await supabase
         .from('group_members')
-        .select('role, groups(id, name)')
+        .select('role, color, groups(id, name)')
         .eq('user_id', user.id)
 
       if (error) throw error
 
       const userGroups = (data || [])
-        .map((row) => (row.groups ? { ...row.groups, role: row.role } : null))
+        .map((row) => (row.groups ? { ...row.groups, role: row.role, color: row.color } : null))
         .filter(Boolean)
       setGroups(userGroups)
 
