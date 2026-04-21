@@ -116,25 +116,25 @@ const GoogleCalendarImport = ({ user, groups, onClose, onImported }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60" onClick={onClose}>
       <div
-        className="w-full max-w-2xl bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden"
+        className="w-full max-w-2xl bg-dark-50 rounded-2xl shadow-2xl border border-dark-300 overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-dark-300">
           <div className="flex items-center gap-3">
-            <svg className="w-6 h-6 text-blue-500" viewBox="0 0 24 24" fill="currentColor">
+            <svg className="w-6 h-6 text-neon" viewBox="0 0 24 24" fill="currentColor">
               <path d="M19.5 3h-3V1.5h-1.5V3h-6V1.5H7.5V3h-3C3.675 3 3 3.675 3 4.5v15c0 .825.675 1.5 1.5 1.5h15c.825 0 1.5-.675 1.5-1.5v-15c0-.825-.675-1.5-1.5-1.5zm0 16.5h-15V8.25h15v11.25z" />
             </svg>
-            <h2 className="text-xl font-bold text-gray-900">Import from Google Calendar</h2>
+            <h2 className="text-xl font-bold text-gray-100">Import from Google Calendar</h2>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg font-bold">✕</button>
+          <button onClick={onClose} className="btn-ghost px-2 py-1 text-gray-500 hover:text-gray-200">✕</button>
         </div>
 
         <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
           {(error || hookError) && (
-            <div className="p-3 rounded-lg bg-red-50 text-red-700 text-sm">
+            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm font-medium">
               {error || hookError}
             </div>
           )}
@@ -142,16 +142,16 @@ const GoogleCalendarImport = ({ user, groups, onClose, onImported }) => {
           {/* Step 1: Connect */}
           {step === 'connect' && (
             <div className="text-center py-8 space-y-4">
-              <p className="text-gray-600">
+              <p className="text-gray-400">
                 Connect your Google account to import events from your Google Calendar into ImDown.
               </p>
               <button
                 onClick={handleAuthorize}
                 disabled={!ready || loading}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-white border-2 border-gray-300 rounded-lg font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-colors shadow-sm"
+                className="btn-secondary px-6 py-3 text-base"
               >
                 {loading ? (
-                  <span className="inline-block w-5 h-5 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+                  <span className="inline-block w-5 h-5 border-2 border-dark-400 border-t-neon rounded-full animate-spin" />
                 ) : (
                   <svg className="w-5 h-5" viewBox="0 0 24 24">
                     <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
@@ -163,7 +163,7 @@ const GoogleCalendarImport = ({ user, groups, onClose, onImported }) => {
                 {loading ? 'Connecting...' : 'Connect Google Calendar'}
               </button>
               {!ready && !hookError && (
-                <p className="text-xs text-gray-400">Loading Google libraries...</p>
+                <p className="text-xs text-gray-600">Loading Google libraries...</p>
               )}
             </div>
           )}
@@ -172,19 +172,19 @@ const GoogleCalendarImport = ({ user, groups, onClose, onImported }) => {
           {step === 'preview' && (
             <>
               <div className="flex items-center justify-between">
-                <p className="text-sm text-gray-600">
-                  Found <strong>{gcalEvents.length}</strong> events. Select the ones you want to import.
+                <p className="text-sm text-gray-400">
+                  Found <strong className="text-gray-200">{gcalEvents.length}</strong> events. Select the ones you want to import.
                 </p>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={toggleAll}
-                    className="text-sm text-indigo-600 hover:text-indigo-800 font-medium"
+                    className="text-sm text-neon hover:text-neon-400 font-medium transition-colors"
                   >
                     {selected.size === gcalEvents.length ? 'Deselect All' : 'Select All'}
                   </button>
                   <button
                     onClick={handleDisconnect}
-                    className="text-sm text-gray-500 hover:text-gray-700"
+                    className="text-sm text-gray-500 hover:text-gray-300 transition-colors"
                   >
                     Disconnect
                   </button>
@@ -194,27 +194,27 @@ const GoogleCalendarImport = ({ user, groups, onClose, onImported }) => {
               {gcalEvents.length === 0 ? (
                 <p className="text-gray-500 text-center py-6">No events found in the selected date range.</p>
               ) : (
-                <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
+                <div className="max-h-64 overflow-y-auto border border-dark-300 rounded-lg divide-y divide-dark-300">
                   {gcalEvents.map((ev, idx) => (
                     <label
                       key={ev.googleId || idx}
                       className={`flex items-start gap-3 px-4 py-3 cursor-pointer transition-colors ${
-                        selected.has(idx) ? 'bg-indigo-50' : 'hover:bg-gray-50'
+                        selected.has(idx) ? 'bg-neon/10' : 'hover:bg-dark-200'
                       }`}
                     >
                       <input
                         type="checkbox"
                         checked={selected.has(idx)}
                         onChange={() => toggleEvent(idx)}
-                        className="mt-1 h-4 w-4 accent-indigo-600"
+                        className="mt-1 h-4 w-4 accent-neon"
                       />
                       <div className="min-w-0 flex-1">
-                        <div className="font-medium text-gray-900 truncate">{ev.title}</div>
+                        <div className="font-medium text-gray-200 truncate">{ev.title}</div>
                         <div className="text-xs text-gray-500">
                           {formatDateTime(ev.start)} &ndash; {formatDateTime(ev.end)}
                         </div>
                         {ev.location && (
-                          <div className="text-xs text-gray-400 truncate">{ev.location}</div>
+                          <div className="text-xs text-gray-600 truncate">{ev.location}</div>
                         )}
                       </div>
                     </label>
@@ -224,8 +224,8 @@ const GoogleCalendarImport = ({ user, groups, onClose, onImported }) => {
 
               {/* Target groups */}
               <div>
-                <div className="text-sm font-bold text-gray-900 mb-2">Add to which group(s)?</div>
-                <div className="border border-gray-200 rounded-lg p-3 bg-gray-50 max-h-40 overflow-y-auto space-y-2">
+                <div className="text-sm font-bold text-gray-200 mb-2">Add to which group(s)?</div>
+                <div className="border border-dark-300 rounded-lg p-3 bg-dark-100 max-h-40 overflow-y-auto space-y-2">
                   {groups.length === 0 ? (
                     <p className="text-gray-500 text-sm">Join a group first to import events.</p>
                   ) : (
@@ -233,7 +233,7 @@ const GoogleCalendarImport = ({ user, groups, onClose, onImported }) => {
                       const checked = targetGroups.includes(g.id);
                       return (
                         <label key={g.id} className="flex items-center justify-between gap-3 cursor-pointer select-none">
-                          <span className="text-sm">{g.name}</span>
+                          <span className="text-sm text-gray-300">{g.name}</span>
                           <input
                             type="checkbox"
                             checked={checked}
@@ -244,7 +244,7 @@ const GoogleCalendarImport = ({ user, groups, onClose, onImported }) => {
                                   : prev.filter((x) => x !== g.id)
                               );
                             }}
-                            className="h-4 w-4 accent-indigo-600"
+                            className="h-4 w-4 accent-neon"
                           />
                         </label>
                       );
@@ -256,14 +256,14 @@ const GoogleCalendarImport = ({ user, groups, onClose, onImported }) => {
               <div className="flex justify-end gap-3 pt-2">
                 <button
                   onClick={onClose}
-                  className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 font-medium hover:bg-gray-50 transition-colors"
+                  className="btn-secondary"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleImport}
                   disabled={selected.size === 0 || targetGroups.length === 0}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                  className="btn-primary"
                 >
                   Import {selected.size} Event{selected.size !== 1 ? 's' : ''}
                 </button>
@@ -274,21 +274,21 @@ const GoogleCalendarImport = ({ user, groups, onClose, onImported }) => {
           {/* Step 3: Importing */}
           {step === 'importing' && (
             <div className="text-center py-8 space-y-3">
-              <span className="inline-block w-8 h-8 border-3 border-gray-300 border-t-indigo-600 rounded-full animate-spin" />
-              <p className="text-gray-600">Importing events...</p>
+              <span className="inline-block w-8 h-8 border-3 border-dark-400 border-t-neon rounded-full animate-spin" />
+              <p className="text-gray-400">Importing events...</p>
             </div>
           )}
 
           {/* Step 4: Done */}
           {step === 'done' && (
             <div className="text-center py-8 space-y-4">
-              <div className="text-4xl">&#10003;</div>
-              <p className="text-gray-800 font-medium">
+              <div className="text-4xl text-neon">&#10003;</div>
+              <p className="text-gray-200 font-medium">
                 Successfully imported {importedCount} event{importedCount !== 1 ? 's' : ''}!
               </p>
               <button
                 onClick={onClose}
-                className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors"
+                className="btn-primary px-6"
               >
                 Done
               </button>

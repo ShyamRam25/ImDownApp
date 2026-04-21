@@ -82,7 +82,7 @@ function GroupInvitations({ user, onInvitationsChanged }) {
         group_id: row.group_id,
         user_id: user.id,
         role: 'member',
-        color: '#6366f1',
+        color: '#00E676',
       });
 
       const dup =
@@ -139,24 +139,24 @@ function GroupInvitations({ user, onInvitationsChanged }) {
 
   if (invites.length === 0 && error) {
     return (
-      <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+      <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
         Could not load invitations: {error}
       </div>
     );
   }
 
   return (
-    <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50/90 shadow-sm overflow-hidden">
-      <div className="px-4 py-3 border-b border-amber-200 bg-amber-100/50">
-        <h2 className="text-sm font-semibold text-amber-900">Group invitations</h2>
-        <p className="text-xs text-amber-800 mt-0.5">
+    <div className="mb-6 rounded-xl border border-neon/20 bg-neon/5 shadow-sm overflow-hidden">
+      <div className="px-4 py-3 border-b border-neon/20 bg-neon/10">
+        <h2 className="text-sm font-semibold text-neon">Group invitations</h2>
+        <p className="text-xs text-gray-400 mt-0.5">
           Someone invited you to join a group. Accept to add it to your groups, or decline.
         </p>
       </div>
       {error && (
-        <div className="px-4 py-2 text-sm text-red-700 bg-red-50 border-b border-red-100">{error}</div>
+        <div className="px-4 py-2 text-sm text-red-400 bg-red-500/10 border-b border-red-500/20">{error}</div>
       )}
-      <ul className="divide-y divide-amber-100">
+      <ul className="divide-y divide-dark-300">
           {invites.map((row) => {
             const groupName = row.groups?.name ?? 'Unknown group';
             const inviterName = row.inviter?.username ?? 'Someone';
@@ -164,12 +164,12 @@ function GroupInvitations({ user, onInvitationsChanged }) {
             return (
               <li key={row.id} className="px-4 py-3 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-medium text-gray-900">
-                    <span className="text-indigo-700">{inviterName}</span>
+                  <p className="text-sm font-medium text-gray-200">
+                    <span className="text-neon-200">{inviterName}</span>
                     {' '}
                     invited you to
                     {' '}
-                    <span className="font-semibold">{groupName}</span>
+                    <span className="font-semibold text-gray-100">{groupName}</span>
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -177,7 +177,7 @@ function GroupInvitations({ user, onInvitationsChanged }) {
                     type="button"
                     onClick={() => handleReject(row)}
                     disabled={busy}
-                    className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                    className="btn-secondary text-sm py-1.5 px-3"
                   >
                     {busy ? '…' : 'Decline'}
                   </button>
@@ -185,7 +185,7 @@ function GroupInvitations({ user, onInvitationsChanged }) {
                     type="button"
                     onClick={() => handleAccept(row)}
                     disabled={busy}
-                    className="px-3 py-1.5 text-sm font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                    className="btn-primary text-sm py-1.5 px-3"
                   >
                     {busy ? '…' : 'Accept'}
                   </button>
