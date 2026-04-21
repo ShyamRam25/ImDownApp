@@ -89,7 +89,17 @@ function App() {
       <div className="container mx-auto">
         {/* Header */}
         <div className="flex justify-between items-center mb-8 flex-wrap gap-4">
-          <h1 className="text-4xl font-bold text-gray-800">ImDown</h1>
+          <img
+            src="/images/LogoPhoto.png"
+            alt="ImDown"
+            className="h-16 w-auto rounded-2xl"
+            style={{
+              WebkitMaskImage:
+                'radial-gradient(ellipse at center, black 55%, transparent 95%)',
+              maskImage:
+                'radial-gradient(ellipse at center, black 55%, transparent 95%)',
+            }}
+          />
 
           <div className="flex items-center gap-3 flex-wrap">
             {/* Group selector */}

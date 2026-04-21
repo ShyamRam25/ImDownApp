@@ -445,26 +445,73 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
       {view === 'month' && (
         <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(7, minmax(0, 1fr))' }}>
           {days.map((date, index) => {
-            if (!date) return <div key={`empty-${index}`} className="aspect-square min-h-[60px]" />;
+            if (!date) return <div key={`empty-${index}`} className="min-h-[96px]" />;
             const isCurrentDay = isToday(date);
             const isSelectedDay = isSelected(date);
+            const dayEvents = eventsForDay(date);
+            const MAX_VISIBLE = 3;
+            const visibleEvents = dayEvents.slice(0, MAX_VISIBLE);
+            const overflow = dayEvents.length - visibleEvents.length;
             return (
-              <button
+              <div
                 key={date.toISOString()}
+                role="button"
+                tabIndex={0}
                 onClick={() => handleDateClick(date)}
-                className={`
-                  aspect-square min-h-[60px] p-1 rounded-lg transition-all
-                  flex items-center justify-center text-sm font-medium
-                  ${isSelectedDay
-                    ? 'bg-blue-500 text-white shadow-md scale-105'
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleDateClick(date);
+                  }
+                }}
+                className={[
+                  'min-h-[96px] p-1.5 rounded-lg transition-colors cursor-pointer',
+                  'flex flex-col gap-1 text-left',
+                  isSelectedDay
+                    ? 'bg-white ring-2 ring-blue-500 shadow-md'
                     : isCurrentDay
-                    ? 'bg-blue-100 text-blue-700 border-2 border-blue-500'
-                    : 'bg-gray-50 text-gray-700 hover:bg-gray-100'}
-                  hover:scale-105 active:scale-95
-                `}
+                    ? 'bg-blue-50 border-2 border-blue-400'
+                    : 'bg-gray-50 hover:bg-gray-100',
+                ].join(' ')}
               >
-                {date.getDate()}
-              </button>
+                <div className="flex justify-end">
+                  <span
+                    className={[
+                      'inline-flex items-center justify-center h-6 min-w-[24px] px-1 rounded-full text-xs font-semibold',
+                      isCurrentDay
+                        ? 'bg-blue-500 text-white'
+                        : isSelectedDay
+                        ? 'text-blue-700'
+                        : 'text-gray-700',
+                    ].join(' ')}
+                  >
+                    {date.getDate()}
+                  </span>
+                </div>
+
+                <div className="flex-1 flex flex-col gap-0.5 overflow-hidden">
+                  {visibleEvents.map((ev) => (
+                    <button
+                      key={ev.id}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openEventDetail(ev);
+                      }}
+                      title={`${ev.title} · ${hmLocal(ev.start_time)}–${hmLocal(ev.end_time)}`}
+                      className={`w-full truncate text-left rounded px-1.5 py-0.5 text-[11px] leading-tight transition-colors ${eventChipClass(ev)}`}
+                    >
+                      <span className="opacity-90 mr-1">{hmLocal(ev.start_time)}</span>
+                      <span className="font-semibold">{ev.title}</span>
+                    </button>
+                  ))}
+                  {overflow > 0 && (
+                    <div className="text-[11px] font-medium text-gray-500 px-1">
+                      +{overflow} more
+                    </div>
+                  )}
+                </div>
+              </div>
             );
           })}
         </div>
