@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
+const DEFAULT_GROUP_COLOR = '#6366f1';
+
 const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
   const [tab, setTab] = useState('mine'); // 'mine' | 'create' | 'join' | 'invite'
   const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupColor, setNewGroupColor] = useState(DEFAULT_GROUP_COLOR);
   const [joinSearch, setJoinSearch] = useState('');
   const [inviteGroupId, setInviteGroupId] = useState('');
   const [inviteUsername, setInviteUsername] = useState('');
@@ -59,11 +62,12 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
 
       const { error: memberErr } = await supabase
         .from('group_members')
-        .insert({ group_id: group.id, user_id: user.id, role: 'admin' });
+        .insert({ group_id: group.id, user_id: user.id, role: 'admin', color: newGroupColor });
 
       if (memberErr) throw memberErr;
 
       setNewGroupName('');
+      setNewGroupColor(DEFAULT_GROUP_COLOR);
       setMessage({ type: 'success', text: `Created "${group.name}"!` });
       onGroupsChanged();
     } catch (err) {
@@ -79,7 +83,7 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
     try {
       const { error } = await supabase
         .from('group_members')
-        .insert({ group_id: groupId, user_id: user.id, role: 'member' });
+        .insert({ group_id: groupId, user_id: user.id, role: 'member', color: DEFAULT_GROUP_COLOR });
 
       if (error) throw error;
 
@@ -169,6 +173,24 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
     }
   };
 
+  const handleUpdateGroupColor = async (groupId, color) => {
+    setLoading(true);
+    setMessage({ type: '', text: '' });
+    try {
+      const { error } = await supabase
+        .from('group_members')
+        .update({ color })
+        .eq('group_id', groupId)
+        .eq('user_id', user.id);
+      if (error) throw error;
+      onGroupsChanged();
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleLeave = async (groupId, groupName) => {
     setLoading(true);
     setMessage({ type: '', text: '' });
@@ -244,15 +266,29 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
             ) : (
               <ul className="space-y-2">
                 {groups.map((g) => (
-                  <li key={g.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <li key={g.id} className="flex flex-wrap items-center justify-between gap-2 p-3 bg-gray-50 rounded-lg">
                     <span className="font-medium text-gray-800">{g.name}</span>
-                    <button
-                      onClick={() => handleLeave(g.id, g.name)}
-                      disabled={loading}
-                      className="text-sm text-red-500 hover:text-red-700 font-medium disabled:opacity-50"
-                    >
-                      Leave
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <label className="flex items-center gap-1.5 text-xs text-gray-600">
+                        <span>Color</span>
+                        <input
+                          type="color"
+                          value={g.color || DEFAULT_GROUP_COLOR}
+                          onChange={(e) => handleUpdateGroupColor(g.id, e.target.value)}
+                          disabled={loading}
+                          className="h-8 w-10 cursor-pointer rounded border border-gray-300 bg-white p-0.5 disabled:opacity-50"
+                          title="Your color for this group on your calendar"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => handleLeave(g.id, g.name)}
+                        disabled={loading}
+                        className="text-sm text-red-500 hover:text-red-700 font-medium disabled:opacity-50"
+                      >
+                        Leave
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -271,6 +307,18 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                   placeholder="e.g. Friday Frisbee Crew"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Calendar color</label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="color"
+                    value={newGroupColor}
+                    onChange={(e) => setNewGroupColor(e.target.value)}
+                    className="h-10 w-14 cursor-pointer rounded border border-gray-300 bg-white p-1"
+                  />
+                  <span className="text-xs text-gray-500">Only affects your calendar — others pick their own color.</span>
+                </div>
               </div>
               <button
                 onClick={handleCreate}

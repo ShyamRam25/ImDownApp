@@ -40,6 +40,49 @@ const hmLocal = (date) => {
 
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 
+const DEFAULT_GROUP_COLOR = '#6366f1';
+const PERSONAL_EVENT_COLOR = '#64748b';
+
+function normalizeHex(c) {
+  if (!c || typeof c !== 'string') return null;
+  const s = c.trim();
+  if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(s)) return null;
+  if (s.length === 4) {
+    return `#${s[1]}${s[1]}${s[2]}${s[2]}${s[3]}${s[3]}`;
+  }
+  return s;
+}
+
+function mixWithWhite(hex, t) {
+  const n = normalizeHex(hex) || DEFAULT_GROUP_COLOR;
+  const r = parseInt(n.slice(1, 3), 16);
+  const g = parseInt(n.slice(3, 5), 16);
+  const b = parseInt(n.slice(5, 7), 16);
+  const r2 = Math.round(r + (255 - r) * t);
+  const g2 = Math.round(g + (255 - g) * t);
+  const b2 = Math.round(b + (255 - b) * t);
+  return `rgb(${r2},${g2},${b2})`;
+}
+
+function textColorOnBg(backgroundCss) {
+  if (typeof backgroundCss === 'string' && backgroundCss.startsWith('rgb(')) {
+    const m = backgroundCss.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+    if (m) {
+      const r = Number(m[1]) / 255;
+      const g = Number(m[2]) / 255;
+      const b = Number(m[3]) / 255;
+      const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      return l > 0.55 ? '#0f172a' : '#ffffff';
+    }
+  }
+  const n = normalizeHex(backgroundCss) || DEFAULT_GROUP_COLOR;
+  const r = parseInt(n.slice(1, 3), 16) / 255;
+  const g = parseInt(n.slice(3, 5), 16) / 255;
+  const b = parseInt(n.slice(5, 7), 16) / 255;
+  const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return l > 0.55 ? '#0f172a' : '#ffffff';
+}
+
 const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(null);
@@ -146,7 +189,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
         if (eventIds.length > 0) {
           const { data: groupEvents, error: geErr } = await supabase
             .from('events')
-            .select('*, event_rsvps(user_id, status), event_groups(group_id)')
+            .select('*, event_rsvps(user_id, status), event_groups(group_id, groups(id, name))')
             .in('id', eventIds)
             .order('start_time', { ascending: true });
 
@@ -477,6 +520,37 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
 
   const isMine = (ev) => ev.created_by === user?.id;
 
+  const groupColorById = useMemo(() => {
+    const m = new Map();
+    for (const g of groups) {
+      m.set(g.id, normalizeHex(g.color) || DEFAULT_GROUP_COLOR);
+    }
+    return m;
+  }, [groups]);
+
+  const getEventTheme = (ev) => {
+    const mine = isMine(ev);
+    const links = Array.isArray(ev.event_groups) ? ev.event_groups : [];
+    let baseHex = PERSONAL_EVENT_COLOR;
+    if (links.length > 0) {
+      const sorted = [...links].sort((a, b) => String(a.group_id).localeCompare(String(b.group_id)));
+      let picked = null;
+      for (const link of sorted) {
+        const c = normalizeHex(groupColorById.get(link.group_id));
+        if (c) {
+          picked = c;
+          break;
+        }
+      }
+      baseHex = picked || DEFAULT_GROUP_COLOR;
+    }
+    const backgroundColor = mine ? baseHex : mixWithWhite(baseHex, 0.38);
+    return {
+      backgroundColor,
+      color: textColorOnBg(backgroundColor),
+    };
+  };
+
   const days = getDaysInMonth(currentDate);
   const currentMonth = monthNames[currentDate.getMonth()];
   const currentYear = currentDate.getFullYear();
@@ -494,15 +568,6 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     const endLabel = weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     return `${startLabel} – ${endLabel}, ${weekEnd.getFullYear()}`;
   })();
-
-  // ── Styling helpers for own vs others' events ───────────────────────
-
-  const eventChipClass = (ev) =>
-    isMine(ev)
-      ? 'bg-blue-500 text-white hover:bg-blue-600'
-      : 'bg-blue-200 text-blue-800 opacity-70 hover:opacity-90';
-
-  const eventHeaderBg = (ev) => (isMine(ev) ? 'bg-blue-500' : 'bg-blue-300');
 
   // ── Render ──────────────────────────────────────────────────────────
 
@@ -729,7 +794,8 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                         openEventDetail(ev);
                       }}
                       title={`${ev.title} · ${hmLocal(ev.start_time)}–${hmLocal(ev.end_time)}`}
-                      className={`w-full truncate text-left rounded px-1.5 py-0.5 text-[11px] leading-tight transition-colors ${eventChipClass(ev)}`}
+                      style={getEventTheme(ev)}
+                      className="w-full truncate text-left rounded px-1.5 py-0.5 text-[11px] leading-tight transition-opacity hover:opacity-90"
                     >
                       <span className="opacity-90 mr-1">{hmLocal(ev.start_time)}</span>
                       <span className="font-semibold">{ev.title}</span>
@@ -810,8 +876,8 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                           key={ev.id}
                           type="button"
                           onClick={() => openEventDetail(ev)}
-                          className={`absolute left-1 right-1 rounded-md text-xs px-2 py-1 shadow pointer-events-auto cursor-pointer overflow-hidden ${eventChipClass(ev)}`}
-                          style={{ top, height }}
+                          className="absolute left-1 right-1 rounded-md text-xs px-2 py-1 shadow pointer-events-auto cursor-pointer overflow-hidden transition-opacity hover:opacity-90"
+                          style={{ top, height, ...getEventTheme(ev) }}
                           title={`${ev.title} · ${hmLocal(s)}–${hmLocal(e)}`}
                         >
                           <div className="font-semibold truncate">{ev.title}</div>
@@ -871,8 +937,8 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                       key={ev.id}
                       type="button"
                       onClick={() => openEventDetail(ev)}
-                      className={`absolute left-2 right-2 rounded-md text-xs px-2 py-1 shadow pointer-events-auto cursor-pointer overflow-hidden ${eventChipClass(ev)}`}
-                      style={{ top, height }}
+                      className="absolute left-2 right-2 rounded-md text-xs px-2 py-1 shadow pointer-events-auto cursor-pointer overflow-hidden transition-opacity hover:opacity-90"
+                      style={{ top, height, ...getEventTheme(ev) }}
                       title={`${ev.title} · ${hmLocal(s)}–${hmLocal(e)}`}
                     >
                       <div className="font-semibold truncate">{ev.title}</div>
@@ -1049,15 +1115,18 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
       {viewingEvent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30" onClick={() => setViewingEvent(null)}>
           <div className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            <div className={`px-6 py-4 ${eventHeaderBg(viewingEvent)}`}>
+            <div
+              className="px-6 py-4"
+              style={getEventTheme(viewingEvent)}
+            >
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h3 className="text-xl font-bold text-white leading-snug">{viewingEvent.title}</h3>
+                  <h3 className="text-xl font-bold leading-snug" style={{ color: 'inherit' }}>{viewingEvent.title}</h3>
                   {!isMine(viewingEvent) && (
-                    <span className="text-xs text-white/80">Someone else&apos;s event</span>
+                    <span className="text-xs opacity-90">Someone else&apos;s event</span>
                   )}
                 </div>
-                <button type="button" onClick={() => setViewingEvent(null)} className="text-white/80 hover:text-white text-lg font-bold leading-none mt-0.5" aria-label="Close">
+                <button type="button" onClick={() => setViewingEvent(null)} className="text-lg font-bold leading-none mt-0.5 opacity-80 hover:opacity-100" style={{ color: 'inherit' }} aria-label="Close">
                   ✕
                 </button>
               </div>
@@ -1105,7 +1174,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                   </svg>
                   <span>
                     {viewingEvent.event_groups
-                      .map((eg) => groups.find((g) => g.id === eg.group_id)?.name ?? 'Unknown group')
+                      .map((eg) => eg.groups?.name ?? groups.find((g) => g.id === eg.group_id)?.name ?? 'Unknown group')
                       .join(', ')}
                   </span>
                 </div>

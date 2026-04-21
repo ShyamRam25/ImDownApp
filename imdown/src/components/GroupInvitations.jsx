@@ -82,6 +82,7 @@ function GroupInvitations({ user, onInvitationsChanged }) {
         group_id: row.group_id,
         user_id: user.id,
         role: 'member',
+        color: '#6366f1',
       });
 
       const dup =
