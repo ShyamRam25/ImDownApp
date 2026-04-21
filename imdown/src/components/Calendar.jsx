@@ -87,34 +87,54 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
         ? groups.map((g) => g.id)
         : [selectedGroupId];
 
-    if (groupIds.length === 0) {
-      setEvents([]);
-      return;
-    }
-
     setEventsLoading(true);
     try {
-      const { data: links, error: linksErr } = await supabase
-        .from('event_groups')
-        .select('event_id')
-        .in('group_id', groupIds);
+      const byId = new Map();
 
-      if (linksErr) throw linksErr;
-
-      const eventIds = [...new Set((links || []).map((l) => l.event_id))];
-      if (eventIds.length === 0) {
-        setEvents([]);
-        return;
-      }
-
-      const { data, error } = await supabase
+      // Personal events: created by you with no group links
+      const { data: mineRows, error: mineErr } = await supabase
         .from('events')
         .select('*, event_rsvps(user_id, status), event_groups(group_id)')
-        .in('id', eventIds)
+        .eq('created_by', user.id)
         .order('start_time', { ascending: true });
 
-      if (error) throw error;
-      setEvents(data || []);
+      if (mineErr) throw mineErr;
+      for (const ev of mineRows || []) {
+        const links = ev.event_groups;
+        const linkCount = Array.isArray(links) ? links.length : 0;
+        if (linkCount === 0) {
+          byId.set(ev.id, ev);
+        }
+      }
+
+      // Group-shared events (when you have at least one group in scope)
+      if (groupIds.length > 0) {
+        const { data: links, error: linksErr } = await supabase
+          .from('event_groups')
+          .select('event_id')
+          .in('group_id', groupIds);
+
+        if (linksErr) throw linksErr;
+
+        const eventIds = [...new Set((links || []).map((l) => l.event_id))];
+        if (eventIds.length > 0) {
+          const { data: groupEvents, error: geErr } = await supabase
+            .from('events')
+            .select('*, event_rsvps(user_id, status), event_groups(group_id)')
+            .in('id', eventIds)
+            .order('start_time', { ascending: true });
+
+          if (geErr) throw geErr;
+          for (const ev of groupEvents || []) {
+            byId.set(ev.id, ev);
+          }
+        }
+      }
+
+      const merged = [...byId.values()].sort(
+        (a, b) => new Date(a.start_time) - new Date(b.start_time)
+      );
+      setEvents(merged);
     } catch (err) {
       console.error('Failed to fetch events:', err.message);
     } finally {
@@ -154,7 +174,6 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
   const createEvent = async () => {
     const title = draftTitle.trim();
     if (!title) { setEventError('Please enter a title.'); return; }
-    if (draftGroups.length === 0) { setEventError('Select at least one group.'); return; }
 
     const start = parseLocalDateTime(draftDate, draftStart);
     const end = parseLocalDateTime(draftDate, draftEnd);
@@ -180,11 +199,13 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
 
       if (evErr) throw evErr;
 
-      const { error: linkErr } = await supabase
-        .from('event_groups')
-        .insert(draftGroups.map((gid) => ({ event_id: event.id, group_id: gid })));
+      if (draftGroups.length > 0) {
+        const { error: linkErr } = await supabase
+          .from('event_groups')
+          .insert(draftGroups.map((gid) => ({ event_id: event.id, group_id: gid })));
 
-      if (linkErr) throw linkErr;
+        if (linkErr) throw linkErr;
+      }
 
       setEventModalOpen(false);
       fetchEvents();
@@ -779,10 +800,15 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
               {/* Right column */}
               <div className="space-y-4">
                 <div>
-                  <div className="text-lg font-bold text-gray-900 mb-2">Which group do you want to invite</div>
+                  <div className="text-lg font-bold text-gray-900 mb-1">Share with groups (optional)</div>
+                  <p className="text-sm text-gray-600 mb-2">
+                    {groups.length === 0
+                      ? 'No groups yet — this will be a personal event only you see here.'
+                      : 'Uncheck all groups to keep it personal (only you).'}
+                  </p>
                   <div className="border border-gray-200 rounded-lg p-3 bg-gray-50 max-h-56 overflow-y-auto pr-2 space-y-2">
                     {groups.length === 0 ? (
-                      <p className="text-gray-500 text-sm">Join a group first to create events.</p>
+                      <p className="text-gray-600 text-sm">You can still add calendar events for yourself.</p>
                     ) : (
                       groups.map((g) => {
                         const checked = draftGroups.includes(g.id);
@@ -886,8 +912,15 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                 </div>
               )}
 
-              {/* Invited groups */}
-              {viewingEvent.event_groups?.length > 0 && (
+              {/* Groups / personal */}
+              {(!viewingEvent.event_groups || viewingEvent.event_groups.length === 0) && isMine(viewingEvent) ? (
+                <div className="flex items-start gap-3 text-gray-700">
+                  <svg className="w-5 h-5 mt-0.5 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                  </svg>
+                  <span>Personal event (not shared with a group)</span>
+                </div>
+              ) : viewingEvent.event_groups?.length > 0 ? (
                 <div className="flex items-start gap-3 text-gray-700">
                   <svg className="w-5 h-5 mt-0.5 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
@@ -898,7 +931,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                       .join(', ')}
                   </span>
                 </div>
-              )}
+              ) : null}
 
               {/* Details */}
               {viewingEvent.details && (
