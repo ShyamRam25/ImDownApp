@@ -3,11 +3,11 @@ import { supabase } from '../lib/supabase';
 
 const VIEW_STORAGE_KEY = 'imdown_calendar_view';
 const HIDDEN_EVENTS_KEY_PREFIX = 'imdown_hidden_events_';
+const DISMISSED_NOTIFS_KEY_PREFIX = 'imdown_dismissed_notifs_';
 
-const readHiddenEventIds = (userId) => {
-  if (!userId) return new Set();
+const readIdSet = (key) => {
   try {
-    const raw = localStorage.getItem(`${HIDDEN_EVENTS_KEY_PREFIX}${userId}`);
+    const raw = localStorage.getItem(key);
     if (!raw) return new Set();
     const arr = JSON.parse(raw);
     return Array.isArray(arr) ? new Set(arr) : new Set();
@@ -16,14 +16,26 @@ const readHiddenEventIds = (userId) => {
   }
 };
 
+const writeIdSet = (key, set) => {
+  try {
+    localStorage.setItem(key, JSON.stringify([...set]));
+  } catch { /* ignore */ }
+};
+
+const readHiddenEventIds = (userId) =>
+  userId ? readIdSet(`${HIDDEN_EVENTS_KEY_PREFIX}${userId}`) : new Set();
+
 const writeHiddenEventIds = (userId, set) => {
   if (!userId) return;
-  try {
-    localStorage.setItem(
-      `${HIDDEN_EVENTS_KEY_PREFIX}${userId}`,
-      JSON.stringify([...set])
-    );
-  } catch { /* ignore */ }
+  writeIdSet(`${HIDDEN_EVENTS_KEY_PREFIX}${userId}`, set);
+};
+
+const readDismissedNotifIds = (userId) =>
+  userId ? readIdSet(`${DISMISSED_NOTIFS_KEY_PREFIX}${userId}`) : new Set();
+
+const writeDismissedNotifIds = (userId, set) => {
+  if (!userId) return;
+  writeIdSet(`${DISMISSED_NOTIFS_KEY_PREFIX}${userId}`, set);
 };
 
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -94,6 +106,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
   const [events, setEvents] = useState([]);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [hiddenEventIds, setHiddenEventIds] = useState(() => readHiddenEventIds(user?.id));
+  const [dismissedNotifIds, setDismissedNotifIds] = useState(() => readDismissedNotifIds(user?.id));
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const notificationsRef = useRef(null);
 
@@ -215,9 +228,11 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     fetchEvents();
   }, [fetchEvents]);
 
-  // Re-load the per-user "hidden events" set whenever the logged-in user changes.
+  // Re-load the per-user "hidden events" and "dismissed notifications" sets
+  // whenever the logged-in user changes.
   useEffect(() => {
     setHiddenEventIds(readHiddenEventIds(user?.id));
+    setDismissedNotifIds(readDismissedNotifIds(user?.id));
   }, [user?.id]);
 
   // Close the notifications popover on outside click / Escape key.
@@ -491,8 +506,9 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
   };
 
   // Pending event invitations: events from the user's groups that haven't ended,
-  // that the user did not create, isn't hidden, and that the user hasn't yet
-  // RSVP'd to. These power the bell icon's notification popup.
+  // that the user did not create, isn't hidden, isn't dismissed from the
+  // notifications panel, and that the user hasn't yet RSVP'd to. These power
+  // the bell icon's notification popup.
   const pendingInvites = useMemo(() => {
     if (!user?.id) return [];
     const now = Date.now();
@@ -500,12 +516,26 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
       .filter((ev) => {
         if (ev.created_by === user.id) return false;
         if (hiddenEventIds.has(ev.id)) return false;
+        if (dismissedNotifIds.has(ev.id)) return false;
         if (new Date(ev.end_time).getTime() <= now) return false;
         const rsvp = ev.event_rsvps?.find((r) => r.user_id === user.id);
         return !rsvp;
       })
       .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
-  }, [events, hiddenEventIds, user?.id]);
+  }, [events, hiddenEventIds, dismissedNotifIds, user?.id]);
+
+  // Clear the notifications panel without changing RSVPs or hiding events.
+  // Adds every currently-pending invite id to the per-user dismissed set so
+  // they won't reappear; future events not yet seen will still show up.
+  const clearAllNotifications = () => {
+    if (pendingInvites.length === 0) return;
+    setDismissedNotifIds((prev) => {
+      const next = new Set(prev);
+      pendingInvites.forEach((ev) => next.add(ev.id));
+      writeDismissedNotifIds(user?.id, next);
+      return next;
+    });
+  };
 
   const isToday = (date) => {
     if (!date) return false;
@@ -642,17 +672,27 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                   <div>
                     <h3 className="text-sm font-semibold text-amber-900">Event invitations</h3>
                     <p className="text-xs text-amber-800 mt-0.5">
-                      Events from your groups that you haven&apos;t responded to yet.
+                      Tap an event to view details and RSVP.
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setNotificationsOpen(false)}
-                    aria-label="Close notifications"
-                    className="text-amber-900/60 hover:text-amber-900 text-sm leading-none"
-                  >
-                    ✕
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={clearAllNotifications}
+                      disabled={pendingInvites.length === 0}
+                      className="px-2 py-1 text-xs font-semibold rounded-md text-amber-900 hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNotificationsOpen(false)}
+                      aria-label="Close notifications"
+                      className="text-amber-900/60 hover:text-amber-900 text-sm leading-none"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
 
                 {pendingInvites.length === 0 ? (
@@ -669,14 +709,14 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                         day: 'numeric',
                       });
                       return (
-                        <li key={ev.id} className="px-4 py-3">
+                        <li key={ev.id}>
                           <button
                             type="button"
                             onClick={() => {
                               openEventDetail(ev);
                               setNotificationsOpen(false);
                             }}
-                            className="block w-full text-left mb-2 hover:underline"
+                            className="block w-full text-left px-4 py-3 hover:bg-amber-100/60 transition-colors"
                           >
                             <p className="text-sm font-semibold text-gray-900 truncate">{ev.title}</p>
                             <p className="text-xs text-gray-600 mt-0.5">
@@ -686,22 +726,6 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                               <p className="text-xs text-gray-500 mt-0.5 truncate">{ev.location}</p>
                             )}
                           </button>
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => updateEventRsvp(ev.id, 'notgoing')}
-                              className="flex-1 px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
-                            >
-                              Decline
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => updateEventRsvp(ev.id, 'going')}
-                              className="flex-1 px-3 py-1.5 text-sm font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
-                            >
-                              Accept
-                            </button>
-                          </div>
                         </li>
                       );
                     })}
