@@ -1,7 +1,42 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
 const VIEW_STORAGE_KEY = 'imdown_calendar_view';
+const HIDDEN_EVENTS_KEY_PREFIX = 'imdown_hidden_events_';
+const DISMISSED_NOTIFS_KEY_PREFIX = 'imdown_dismissed_notifs_';
+
+const readIdSet = (key) => {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? new Set(arr) : new Set();
+  } catch {
+    return new Set();
+  }
+};
+
+const writeIdSet = (key, set) => {
+  try {
+    localStorage.setItem(key, JSON.stringify([...set]));
+  } catch { /* ignore */ }
+};
+
+const readHiddenEventIds = (userId) =>
+  userId ? readIdSet(`${HIDDEN_EVENTS_KEY_PREFIX}${userId}`) : new Set();
+
+const writeHiddenEventIds = (userId, set) => {
+  if (!userId) return;
+  writeIdSet(`${HIDDEN_EVENTS_KEY_PREFIX}${userId}`, set);
+};
+
+const readDismissedNotifIds = (userId) =>
+  userId ? readIdSet(`${DISMISSED_NOTIFS_KEY_PREFIX}${userId}`) : new Set();
+
+const writeDismissedNotifIds = (userId, set) => {
+  if (!userId) return;
+  writeIdSet(`${DISMISSED_NOTIFS_KEY_PREFIX}${userId}`, set);
+};
 
 const pad2 = (n) => String(n).padStart(2, '0');
 
@@ -100,6 +135,10 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
 
   const [events, setEvents] = useState([]);
   const [eventsLoading, setEventsLoading] = useState(false);
+  const [hiddenEventIds, setHiddenEventIds] = useState(() => readHiddenEventIds(user?.id));
+  const [dismissedNotifIds, setDismissedNotifIds] = useState(() => readDismissedNotifIds(user?.id));
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const notificationsRef = useRef(null);
 
   const [eventModalOpen, setEventModalOpen] = useState(false);
   const [draftTitle, setDraftTitle] = useState('');
@@ -219,6 +258,32 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     fetchEvents();
   }, [fetchEvents]);
 
+  // Re-load the per-user "hidden events" and "dismissed notifications" sets
+  // whenever the logged-in user changes.
+  useEffect(() => {
+    setHiddenEventIds(readHiddenEventIds(user?.id));
+    setDismissedNotifIds(readDismissedNotifIds(user?.id));
+  }, [user?.id]);
+
+  // Close the notifications popover on outside click / Escape key.
+  useEffect(() => {
+    if (!notificationsOpen) return undefined;
+    const onDown = (e) => {
+      if (notificationsRef.current && !notificationsRef.current.contains(e.target)) {
+        setNotificationsOpen(false);
+      }
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setNotificationsOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [notificationsOpen]);
+
   // Keep the open event-detail modal in sync with the latest events data,
   // so RSVP updates (and any background refetch) always reflect on screen.
   useEffect(() => {
@@ -287,6 +352,17 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     } finally {
       setSaving(false);
     }
+  };
+
+  // Per-user hide: removes the event from this user's calendar view only.
+  // Does NOT touch the events table; other invitees still see it.
+  const hideEventFromMyCalendar = (eventId) => {
+    setHiddenEventIds((prev) => {
+      const next = new Set(prev);
+      next.add(eventId);
+      writeHiddenEventIds(user?.id, next);
+      return next;
+    });
   };
 
   const deleteEvent = async (eventId) => {
@@ -447,11 +523,12 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     const startMs = visibleStart.getTime();
     const endMs = visibleEnd.getTime();
     return events.filter((e) => {
+      if (hiddenEventIds.has(e.id)) return false;
       const s = new Date(e.start_time).getTime();
       const en = new Date(e.end_time).getTime();
       return en > startMs && s < endMs;
     });
-  }, [events, visibleStart, visibleEnd]);
+  }, [events, visibleStart, visibleEnd, hiddenEventIds]);
 
   const eventsForDay = (date) => {
     const dayStart = startOfDay(date).getTime();
@@ -463,6 +540,38 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
         return en > dayStart && s < dayEnd;
       })
       .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+  };
+
+  // Pending event invitations: events from the user's groups that haven't ended,
+  // that the user did not create, isn't hidden, isn't dismissed from the
+  // notifications panel, and that the user hasn't yet RSVP'd to. These power
+  // the bell icon's notification popup.
+  const pendingInvites = useMemo(() => {
+    if (!user?.id) return [];
+    const now = Date.now();
+    return events
+      .filter((ev) => {
+        if (ev.created_by === user.id) return false;
+        if (hiddenEventIds.has(ev.id)) return false;
+        if (dismissedNotifIds.has(ev.id)) return false;
+        if (new Date(ev.end_time).getTime() <= now) return false;
+        const rsvp = ev.event_rsvps?.find((r) => r.user_id === user.id);
+        return !rsvp;
+      })
+      .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+  }, [events, hiddenEventIds, dismissedNotifIds, user?.id]);
+
+  // Clear the notifications panel without changing RSVPs or hiding events.
+  // Adds every currently-pending invite id to the per-user dismissed set so
+  // they won't reappear; future events not yet seen will still show up.
+  const clearAllNotifications = () => {
+    if (pendingInvites.length === 0) return;
+    setDismissedNotifIds((prev) => {
+      const next = new Set(prev);
+      pendingInvites.forEach((ev) => next.add(ev.id));
+      writeDismissedNotifIds(user?.id, next);
+      return next;
+    });
   };
 
   const isToday = (date) => {
@@ -571,6 +680,99 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                 </button>
               );
             })}
+          </div>
+
+          {/* Notifications bell + popover */}
+          <div className="relative" ref={notificationsRef}>
+            <button
+              type="button"
+              onClick={() => setNotificationsOpen((v) => !v)}
+              aria-label={`Notifications${pendingInvites.length ? ` (${pendingInvites.length} pending)` : ''}`}
+              aria-haspopup="dialog"
+              aria-expanded={notificationsOpen}
+              className="relative p-2 rounded-lg hover:bg-gray-100 transition-colors"
+            >
+              <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+              </svg>
+              {pendingInvites.length > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">
+                  {pendingInvites.length > 99 ? '99+' : pendingInvites.length}
+                </span>
+              )}
+            </button>
+
+            {notificationsOpen && (
+              <div
+                role="dialog"
+                aria-label="Event invitations"
+                className="absolute right-0 mt-2 w-96 max-w-[90vw] z-40 rounded-xl border border-amber-200 bg-amber-50/95 shadow-2xl overflow-hidden"
+              >
+                <div className="px-4 py-3 border-b border-amber-200 bg-amber-100/50 flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-amber-900">Event invitations</h3>
+                    <p className="text-xs text-amber-800 mt-0.5">
+                      Tap an event to view details and RSVP.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={clearAllNotifications}
+                      disabled={pendingInvites.length === 0}
+                      className="px-2 py-1 text-xs font-semibold rounded-md text-amber-900 hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNotificationsOpen(false)}
+                      aria-label="Close notifications"
+                      className="text-amber-900/60 hover:text-amber-900 text-sm leading-none"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+
+                {pendingInvites.length === 0 ? (
+                  <div className="px-4 py-6 text-center text-sm text-amber-900/70">
+                    You&apos;re all caught up!
+                  </div>
+                ) : (
+                  <ul className="divide-y divide-amber-100 max-h-96 overflow-y-auto">
+                    {pendingInvites.map((ev) => {
+                      const start = new Date(ev.start_time);
+                      const dateLabel = start.toLocaleDateString('en-US', {
+                        weekday: 'short',
+                        month: 'short',
+                        day: 'numeric',
+                      });
+                      return (
+                        <li key={ev.id}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              openEventDetail(ev);
+                              setNotificationsOpen(false);
+                            }}
+                            className="block w-full text-left px-4 py-3 hover:bg-amber-100/60 transition-colors"
+                          >
+                            <p className="text-sm font-semibold text-gray-900 truncate">{ev.title}</p>
+                            <p className="text-xs text-gray-600 mt-0.5">
+                              {dateLabel} · {hmLocal(ev.start_time)}–{hmLocal(ev.end_time)}
+                            </p>
+                            {ev.location && (
+                              <p className="text-xs text-gray-500 mt-0.5 truncate">{ev.location}</p>
+                            )}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -1134,9 +1336,11 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                 </>
               )}
 
-              {/* Delete (only for own events) */}
-              {isMine(viewingEvent) && (
-                <div className="flex justify-end pt-2 border-t border-gray-100">
+              {/* Footer actions:
+                  - Creator sees "Delete Event" (removes from DB for everyone).
+                  - Non-creators see "Remove from My Calendar" (per-user hide). */}
+              <div className="flex justify-end pt-2 border-t border-gray-100">
+                {isMine(viewingEvent) ? (
                   <button
                     type="button"
                     onClick={() => { deleteEvent(viewingEvent.id); setViewingEvent(null); }}
@@ -1144,8 +1348,20 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                   >
                     Delete Event
                   </button>
-                </div>
-              )}
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      hideEventFromMyCalendar(viewingEvent.id);
+                      setViewingEvent(null);
+                    }}
+                    className="text-red-500 hover:text-red-700 text-sm font-medium transition-colors"
+                    title="Hide this event from your calendar. The organizer and other invitees will still see it."
+                  >
+                    Remove from My Calendar
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
