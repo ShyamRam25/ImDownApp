@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
 const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
-  const [tab, setTab] = useState('mine'); // 'mine' | 'create' | 'join'
+  const [tab, setTab] = useState('mine'); // 'mine' | 'create' | 'join' | 'invite'
   const [newGroupName, setNewGroupName] = useState('');
   const [joinSearch, setJoinSearch] = useState('');
+  const [inviteGroupId, setInviteGroupId] = useState('');
+  const [inviteUsername, setInviteUsername] = useState('');
   const [availableGroups, setAvailableGroups] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
@@ -91,6 +93,82 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
     }
   };
 
+  useEffect(() => {
+    if (groups.length > 0 && !inviteGroupId) {
+      setInviteGroupId(groups[0].id);
+    }
+    if (groups.length > 0 && inviteGroupId && !groups.some((g) => g.id === inviteGroupId)) {
+      setInviteGroupId(groups[0].id);
+    }
+    if (groups.length === 0) {
+      setInviteGroupId('');
+    }
+  }, [groups, inviteGroupId]);
+
+  const handleSendInvite = async () => {
+    const username = inviteUsername.trim();
+    if (!username) {
+      setMessage({ type: 'error', text: 'Enter a username to invite.' });
+      return;
+    }
+    if (!inviteGroupId) {
+      setMessage({ type: 'error', text: 'Choose a group first.' });
+      return;
+    }
+    setLoading(true);
+    setMessage({ type: '', text: '' });
+    try {
+      const { data: invitee, error: userErr } = await supabase
+        .from('users')
+        .select('id, username')
+        .eq('username', username)
+        .maybeSingle();
+
+      if (userErr) throw userErr;
+      if (!invitee) {
+        setMessage({ type: 'error', text: `No user found with username "${username}".` });
+        return;
+      }
+      if (invitee.id === user.id) {
+        setMessage({ type: 'error', text: 'You cannot invite yourself.' });
+        return;
+      }
+
+      const { data: alreadyMember } = await supabase
+        .from('group_members')
+        .select('id')
+        .eq('group_id', inviteGroupId)
+        .eq('user_id', invitee.id)
+        .maybeSingle();
+
+      if (alreadyMember) {
+        setMessage({ type: 'error', text: 'That user is already in this group.' });
+        return;
+      }
+
+      const { error: invErr } = await supabase.from('group_invitations').insert({
+        group_id: inviteGroupId,
+        invited_user_id: invitee.id,
+        invited_by_user_id: user.id,
+      });
+
+      if (invErr) {
+        if (invErr.code === '23505' || String(invErr.message || '').includes('idx_group_invitations_pending_unique')) {
+          setMessage({ type: 'error', text: 'An invitation is already pending for this user and group.' });
+          return;
+        }
+        throw invErr;
+      }
+
+      setInviteUsername('');
+      setMessage({ type: 'success', text: `Invitation sent to ${invitee.username}!` });
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleLeave = async (groupId, groupName) => {
     setLoading(true);
     setMessage({ type: '', text: '' });
@@ -116,6 +194,7 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
     { key: 'mine', label: 'My Groups' },
     { key: 'create', label: 'Create' },
     { key: 'join', label: 'Join' },
+    { key: 'invite', label: 'Invite' },
   ];
 
   return (
@@ -230,6 +309,45 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
                 ))}
               </ul>
             </div>
+          )}
+
+          {/* Invite tab */}
+          {tab === 'invite' && (
+            groups.length === 0 ? (
+              <p className="text-gray-500 text-center py-4">Join or create a group first, then you can invite others by username.</p>
+            ) : (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Group</label>
+                  <select
+                    value={inviteGroupId}
+                    onChange={(e) => setInviteGroupId(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white"
+                  >
+                    {groups.map((g) => (
+                      <option key={g.id} value={g.id}>{g.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                  <input
+                    value={inviteUsername}
+                    onChange={(e) => setInviteUsername(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSendInvite()}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    placeholder="Exact username (case-sensitive)"
+                  />
+                </div>
+                <button
+                  onClick={handleSendInvite}
+                  disabled={loading || !inviteUsername.trim()}
+                  className="w-full px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                >
+                  {loading ? 'Sending…' : 'Send invitation'}
+                </button>
+              </div>
+            )
           )}
         </div>
       </div>
