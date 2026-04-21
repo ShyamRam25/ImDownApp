@@ -137,7 +137,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
       // Personal events: created by you with no group links
       const { data: mineRows, error: mineErr } = await supabase
         .from('events')
-        .select('*, event_rsvps(user_id, status), event_groups(group_id)')
+        .select('*, event_rsvps(user_id, status, users(username)), event_groups(group_id)')
         .eq('created_by', user.id)
         .order('start_time', { ascending: true });
 
@@ -163,7 +163,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
         if (eventIds.length > 0) {
           const { data: groupEvents, error: geErr } = await supabase
             .from('events')
-            .select('*, event_rsvps(user_id, status), event_groups(group_id, groups(id, name))')
+            .select('*, event_rsvps(user_id, status, users(username)), event_groups(group_id, groups(id, name))')
             .in('id', eventIds)
             .order('start_time', { ascending: true });
 
@@ -284,7 +284,12 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
       if (isSame) return without;
       return [
         ...without,
-        { user_id: user.id, status, responded_at: new Date().toISOString() },
+        {
+          user_id: user.id,
+          status,
+          responded_at: new Date().toISOString(),
+          users: user?.username ? { username: user.username } : null,
+        },
       ];
     };
 
@@ -325,12 +330,14 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     return ev?.event_rsvps?.find((r) => r.user_id === user.id)?.status ?? null;
   };
 
-  const getRsvpCounts = (ev) => {
+  const getRsvpNamesByStatus = (ev) => {
     const rsvps = ev?.event_rsvps || [];
+    const nameFor = (r) => r?.users?.username || `User #${r.user_id}`;
+    const sortNames = (arr) => [...arr].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
     return {
-      going: rsvps.filter((r) => r.status === 'going').length,
-      maybe: rsvps.filter((r) => r.status === 'maybe').length,
-      notgoing: rsvps.filter((r) => r.status === 'notgoing').length,
+      going: sortNames(rsvps.filter((r) => r.status === 'going').map(nameFor)),
+      maybe: sortNames(rsvps.filter((r) => r.status === 'maybe').map(nameFor)),
+      notgoing: sortNames(rsvps.filter((r) => r.status === 'notgoing').map(nameFor)),
     };
   };
 
@@ -1009,16 +1016,34 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                 </div>
               )}
 
-              {/* RSVP counts */}
+              {/* Who responded */}
               {(() => {
-                const counts = getRsvpCounts(viewingEvent);
-                const total = counts.going + counts.maybe + counts.notgoing;
-                if (total === 0) return null;
+                const byStatus = getRsvpNamesByStatus(viewingEvent);
+                const block = (label, emoji, names, colorClass) => (
+                  <div className="rounded-lg border border-gray-200 overflow-hidden">
+                    <div className={`px-3 py-2 text-xs font-semibold ${colorClass} flex items-center justify-between`}>
+                      <span>{emoji} {label}</span>
+                      <span className="text-gray-500 font-normal">({names.length})</span>
+                    </div>
+                    <ul className="px-3 py-2 text-sm text-gray-800 max-h-32 overflow-y-auto space-y-0.5">
+                      {names.length === 0 ? (
+                        <li className="text-gray-400 text-xs italic">No one yet</li>
+                      ) : (
+                        names.map((name, idx) => (
+                          <li key={`${label}-${idx}-${name}`} className="truncate">{name}</li>
+                        ))
+                      )}
+                    </ul>
+                  </div>
+                );
                 return (
-                  <div className="flex gap-4 text-xs text-gray-500">
-                    <span>{counts.going} going</span>
-                    <span>{counts.maybe} maybe</span>
-                    <span>{counts.notgoing} can&apos;t</span>
+                  <div className="space-y-2">
+                    <div className="text-sm font-semibold text-gray-600">Who&apos;s down?</div>
+                    <div className="grid gap-2 sm:grid-cols-1">
+                      {block('Going', '🤙', byStatus.going, 'bg-green-50 text-green-900 border-b border-green-100')}
+                      {block('Maybe', '🤔', byStatus.maybe, 'bg-amber-50 text-amber-900 border-b border-amber-100')}
+                      {block("Can't go", '😔', byStatus.notgoing, 'bg-red-50 text-red-900 border-b border-red-100')}
+                    </div>
                   </div>
                 );
               })()}
