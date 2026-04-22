@@ -67,6 +67,65 @@ const writePeopleColorOverrides = (userId, obj) => {
   } catch { /* ignore */ }
 };
 
+// Per-viewer visible hour window for time-grid views (week / day).
+// Stored as `{ start, end }` integer hours in [0, 24]. A minimum window
+// of MIN_HOUR_WINDOW hours is enforced so the grid stays readable.
+const VISIBLE_HOURS_KEY_PREFIX = 'imdown_visible_hours_';
+const DEFAULT_VISIBLE_HOURS = { start: 0, end: 24 };
+const MIN_HOUR_WINDOW = 2;
+
+const sanitizeVisibleHours = (raw) => {
+  const s = Number.isFinite(raw?.start) ? Math.round(raw.start) : 0;
+  const e = Number.isFinite(raw?.end) ? Math.round(raw.end) : 24;
+  const start = Math.max(0, Math.min(24 - MIN_HOUR_WINDOW, s));
+  const end = Math.max(start + MIN_HOUR_WINDOW, Math.min(24, e));
+  return { start, end };
+};
+
+const readVisibleHours = (userId) => {
+  if (!userId) return { ...DEFAULT_VISIBLE_HOURS };
+  try {
+    const raw = localStorage.getItem(`${VISIBLE_HOURS_KEY_PREFIX}${userId}`);
+    if (!raw) return { ...DEFAULT_VISIBLE_HOURS };
+    return sanitizeVisibleHours(JSON.parse(raw));
+  } catch {
+    return { ...DEFAULT_VISIBLE_HOURS };
+  }
+};
+
+const writeVisibleHours = (userId, range) => {
+  if (!userId) return;
+  try {
+    localStorage.setItem(
+      `${VISIBLE_HOURS_KEY_PREFIX}${userId}`,
+      JSON.stringify(sanitizeVisibleHours(range))
+    );
+  } catch { /* ignore */ }
+};
+
+const formatHourShort = (h) => {
+  const hour = ((h % 24) + 24) % 24;
+  if (hour === 0) return '12a';
+  if (hour === 12) return '12p';
+  const suffix = hour < 12 ? 'a' : 'p';
+  const base = hour % 12 === 0 ? 12 : hour % 12;
+  return `${base}${suffix}`;
+};
+
+const formatHourLong = (h) => {
+  const hour = ((h % 24) + 24) % 24;
+  if (hour === 0) return '12:00 AM';
+  if (hour === 12) return '12:00 PM';
+  const suffix = hour < 12 ? 'AM' : 'PM';
+  const base = hour % 12 === 0 ? 12 : hour % 12;
+  return `${base}:00 ${suffix}`;
+};
+
+const formatHourRangeShort = ({ start, end }) => {
+  if (start === 0 && end === 24) return 'All day';
+  return `${formatHourShort(start)}\u2013${formatHourShort(end === 24 ? 0 : end)}`;
+};
+
 const pad2 = (n) => String(n).padStart(2, '0');
 
 const ymdLocal = (date) => {
@@ -174,6 +233,95 @@ function getDayEventTimeLayouts(events) {
   return map;
 }
 
+/**
+ * Small pill that renders "^ N earlier" or "v N later" for events that fall
+ * outside the current visible hour window. Clicking opens an inline list;
+ * clicking an entry invokes `onEventClick(ev)`.
+ *
+ * Pass `menuAlign` to choose where the popover appears relative to the pill
+ * ("below" | "above" | "right" | "left").
+ */
+function OverflowPill({ events, direction, menuAlign = 'below', onEventClick }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  if (!events?.length) return null;
+
+  const count = events.length;
+  const label = direction === 'earlier' ? 'earlier' : 'later';
+  const icon = direction === 'earlier' ? '\u2191' : '\u2193';
+
+  const menuPositionClass = {
+    below: 'top-full left-1/2 -translate-x-1/2 mt-1',
+    above: 'bottom-full left-1/2 -translate-x-1/2 mb-1',
+    right: 'left-full top-1/2 -translate-y-1/2 ml-1',
+    left: 'right-full top-1/2 -translate-y-1/2 mr-1',
+  }[menuAlign];
+
+  return (
+    <div ref={ref} className="relative inline-block pointer-events-auto">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title={`${count} event${count === 1 ? '' : 's'} ${label} than visible range`}
+        className="inline-flex items-center gap-1 text-[10px] font-semibold leading-none rounded-md bg-dark-200/90 border border-dark-300 text-gray-200 hover:bg-dark-300 px-1.5 py-1 shadow"
+      >
+        <span aria-hidden="true">{icon}</span>
+        <span>{count} {label}</span>
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          aria-label={`${count} ${label} event${count === 1 ? '' : 's'}`}
+          className={`absolute z-30 w-56 max-h-56 overflow-y-auto rounded-lg border border-dark-300 bg-dark-100 shadow-2xl ${menuPositionClass}`}
+        >
+          <ul className="divide-y divide-dark-300">
+            {events.map((ev) => (
+              <li key={ev.id}>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setOpen(false);
+                    onEventClick?.(ev);
+                  }}
+                  className="w-full text-left px-3 py-2 text-xs hover:bg-dark-200 text-gray-200"
+                >
+                  <div className="font-semibold truncate">{ev.title}</div>
+                  <div className="text-gray-400">
+                    {hmLocal(ev.start_time)}&ndash;{hmLocal(ev.end_time)}
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(null);
@@ -192,8 +340,11 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
   const [hiddenEventIds, setHiddenEventIds] = useState(() => readHiddenEventIds(user?.id));
   const [dismissedNotifIds, setDismissedNotifIds] = useState(() => readDismissedNotifIds(user?.id));
   const [peopleColorOverrides, setPeopleColorOverrides] = useState(() => readPeopleColorOverrides(user?.id));
+  const [visibleHours, setVisibleHoursState] = useState(() => readVisibleHours(user?.id));
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const notificationsRef = useRef(null);
+  const [hoursOpen, setHoursOpen] = useState(false);
+  const hoursRef = useRef(null);
 
   const [eventModalOpen, setEventModalOpen] = useState(false);
   const [draftTitle, setDraftTitle] = useState('');
@@ -313,13 +464,38 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     fetchEvents();
   }, [fetchEvents]);
 
-  // Re-load the per-user "hidden events", "dismissed notifications", and
-  // People-mode color overrides whenever the logged-in user changes.
+  // Re-load the per-user "hidden events", "dismissed notifications",
+  // People-mode color overrides, and visible-hours window whenever the
+  // logged-in user changes.
   useEffect(() => {
     setHiddenEventIds(readHiddenEventIds(user?.id));
     setDismissedNotifIds(readDismissedNotifIds(user?.id));
     setPeopleColorOverrides(readPeopleColorOverrides(user?.id));
+    setVisibleHoursState(readVisibleHours(user?.id));
   }, [user?.id]);
+
+  // Wrapper that writes through to localStorage on every update, so the
+  // slider / preset buttons stay persistent across reloads. Uses the
+  // functional form of the underlying setter so rapid slider drags always
+  // see the latest state.
+  const setVisibleHours = useCallback(
+    (next) => {
+      setVisibleHoursState((prev) => {
+        const sanitized = sanitizeVisibleHours(
+          typeof next === 'function' ? next(prev) : next
+        );
+        writeVisibleHours(user?.id, sanitized);
+        return sanitized;
+      });
+    },
+    [user?.id]
+  );
+
+  // Derived hour-window helpers used by the time-grid views below.
+  const visibleStartMin = visibleHours.start * 60;
+  const visibleEndMin = visibleHours.end * 60;
+  const visibleWindowMin = visibleEndMin - visibleStartMin;
+  const visibleHourCount = visibleHours.end - visibleHours.start;
 
   // Auto-reset mode to 'groups' whenever we leave a specific-group view,
   // since People mode is only meaningful when a single group is selected.
@@ -383,6 +559,25 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
       document.removeEventListener('keydown', onKey);
     };
   }, [notificationsOpen]);
+
+  // Close the hours popover on outside click / Escape key.
+  useEffect(() => {
+    if (!hoursOpen) return undefined;
+    const onDown = (e) => {
+      if (hoursRef.current && !hoursRef.current.contains(e.target)) {
+        setHoursOpen(false);
+      }
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setHoursOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [hoursOpen]);
 
   // Keep the open event-detail modal in sync with the latest events data,
   // so RSVP updates (and any background refetch) always reflect on screen.
@@ -833,10 +1028,10 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
 
         <div className="flex items-center gap-4">
           <h2 className="text-2xl font-bold text-gray-100">{headerText}</h2>
-          <button onClick={goToToday} className="btn-primary text-sm py-2">
+          <button onClick={goToToday} className="btn-primary text-sm py-2 shrink-0 whitespace-nowrap">
             Today
           </button>
-          <button onClick={openCreateEvent} className="btn-outline text-sm py-2">
+          <button onClick={openCreateEvent} className="btn-outline text-sm py-2 shrink-0 whitespace-nowrap">
             + Event
           </button>
           <div className="inline-flex rounded-xl bg-dark-100 border border-dark-300 p-1 gap-0.5">
@@ -885,6 +1080,158 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                   </button>
                 );
               })}
+            </div>
+          )}
+
+          {/* Visible-hours popover (only meaningful for time-grid views) */}
+          {(view === 'week' || view === 'day') && (
+            <div className="relative" ref={hoursRef}>
+              <button
+                type="button"
+                onClick={() => setHoursOpen((v) => !v)}
+                aria-haspopup="dialog"
+                aria-expanded={hoursOpen}
+                title="Adjust the visible hour range"
+                className="shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-lg bg-dark-100 border border-dark-300 text-gray-200 hover:bg-dark-200 transition-colors"
+              >
+                <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>{formatHourRangeShort(visibleHours)}</span>
+              </button>
+
+              {hoursOpen && (
+                <div
+                  role="dialog"
+                  aria-label="Visible hours"
+                  className="absolute right-0 mt-2 w-80 max-w-[90vw] z-40 rounded-xl border border-dark-300 bg-dark-100 shadow-2xl overflow-hidden"
+                >
+                  <div className="px-4 py-3 border-b border-dark-300 bg-dark-200/50 flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-neon-200">Visible hours</h3>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        Limit the week and day views to a specific range.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setHoursOpen(false)}
+                      aria-label="Close"
+                      className="text-gray-500 hover:text-gray-300 text-sm leading-none shrink-0"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div className="p-4 space-y-4">
+                    <div className="text-center">
+                      <div className="text-base font-semibold text-gray-100">
+                        {formatHourLong(visibleHours.start)}
+                        <span className="mx-2 text-gray-500">–</span>
+                        {visibleHours.end === 24 ? '12:00 AM' : formatHourLong(visibleHours.end)}
+                      </div>
+                      <div className="text-xs text-gray-400 mt-0.5">
+                        {visibleHourCount} hour{visibleHourCount === 1 ? '' : 's'} shown
+                      </div>
+                    </div>
+
+                    {/* Dual slider: start and end hours. The minimum gap of
+                        MIN_HOUR_WINDOW hours is enforced by the setter. */}
+                    <div className="space-y-3">
+                      <label className="block">
+                        <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
+                          <span>Start</span>
+                          <span className="font-semibold text-gray-200">
+                            {formatHourLong(visibleHours.start)}
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={24 - MIN_HOUR_WINDOW}
+                          step={1}
+                          value={visibleHours.start}
+                          onChange={(e) => {
+                            const next = Number(e.target.value);
+                            setVisibleHours((prev) => {
+                              const start = clamp(next, 0, 24 - MIN_HOUR_WINDOW);
+                              const end = Math.max(prev.end, start + MIN_HOUR_WINDOW);
+                              return { start, end: Math.min(24, end) };
+                            });
+                          }}
+                          className="w-full accent-neon"
+                          aria-label="Start hour"
+                        />
+                      </label>
+                      <label className="block">
+                        <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
+                          <span>End</span>
+                          <span className="font-semibold text-gray-200">
+                            {visibleHours.end === 24 ? '12:00 AM' : formatHourLong(visibleHours.end)}
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={MIN_HOUR_WINDOW}
+                          max={24}
+                          step={1}
+                          value={visibleHours.end}
+                          onChange={(e) => {
+                            const next = Number(e.target.value);
+                            setVisibleHours((prev) => {
+                              const end = clamp(next, MIN_HOUR_WINDOW, 24);
+                              const start = Math.min(prev.start, end - MIN_HOUR_WINDOW);
+                              return { start: Math.max(0, start), end };
+                            });
+                          }}
+                          className="w-full accent-neon"
+                          aria-label="End hour"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { label: 'All day', range: { start: 0, end: 24 } },
+                        { label: 'Work 8a–6p', range: { start: 8, end: 18 } },
+                        { label: 'Waking 7a–11p', range: { start: 7, end: 23 } },
+                      ].map((preset) => {
+                        const active =
+                          visibleHours.start === preset.range.start &&
+                          visibleHours.end === preset.range.end;
+                        return (
+                          <button
+                            key={preset.label}
+                            type="button"
+                            onClick={() => setVisibleHours(preset.range)}
+                            className={[
+                              'px-2 py-1.5 text-xs font-semibold rounded-md border transition-colors',
+                              active
+                                ? 'bg-neon text-dark border-neon'
+                                : 'bg-dark-200 text-gray-300 border-dark-300 hover:bg-dark-300',
+                            ].join(' ')}
+                          >
+                            {preset.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setVisibleHours(DEFAULT_VISIBLE_HOURS)}
+                        disabled={
+                          visibleHours.start === 0 && visibleHours.end === 24
+                        }
+                        className="text-xs font-medium text-gray-400 hover:text-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Reset to all day
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1214,34 +1561,67 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
 
           <div className="relative">
             <div className="grid" style={{ gridTemplateColumns: '64px repeat(7, minmax(0, 1fr))' }}>
-              {Array.from({ length: 24 }, (_, hour) => (
-                <div key={`hour-${hour}`} className="contents">
-                  <div className="relative border-b border-dark-200 bg-dark-100">
-                    <div className="absolute -top-2 right-2 text-[10px] text-gray-600">
-                      {hour === 0 ? '' : `${hour % 12 === 0 ? 12 : hour % 12}${hour < 12 ? 'AM' : 'PM'}`}
+              {Array.from({ length: visibleHourCount }, (_, i) => {
+                const hour = visibleHours.start + i;
+                return (
+                  <div key={`hour-${hour}`} className="contents">
+                    <div className="relative border-b border-dark-200 bg-dark-100">
+                      <div className="absolute -top-2 right-2 text-[10px] text-gray-600">
+                        {i === 0 ? '' : `${hour % 12 === 0 ? 12 : hour % 12}${hour < 12 || hour === 24 ? 'AM' : 'PM'}`}
+                      </div>
+                      <div className="h-12" />
                     </div>
-                    <div className="h-12" />
+                    {weekDates.map((date) => (
+                      <div key={`cell-${ymdLocal(date)}-${hour}`} className="border-b border-dark-200 border-l border-dark-200 bg-dark-50 h-12" />
+                    ))}
                   </div>
-                  {weekDates.map((date) => (
-                    <div key={`cell-${ymdLocal(date)}-${hour}`} className="border-b border-dark-200 border-l border-dark-200 bg-dark-50 h-12" />
-                  ))}
-                </div>
-              ))}
+                );
+              })}
             </div>
 
-            <div className="absolute inset-0 grid pointer-events-none" style={{ gridTemplateColumns: '64px repeat(7, minmax(0, 1fr))' }}>
-              <div />
+            <div className="absolute inset-0 grid" style={{ gridTemplateColumns: '64px repeat(7, minmax(0, 1fr))' }}>
+              <div className="pointer-events-none" />
               {weekDates.map((date) => {
                 const dayEvents = eventsForDay(date);
                 const timeLayouts = getDayEventTimeLayouts(dayEvents);
-                const totalHeight = 24 * 48;
+                const totalHeight = visibleHourCount * 48;
+                const dayStartMs = startOfDay(date).getTime();
+                const dayEndMs = addDays(startOfDay(date), 1).getTime();
+
+                // Partition events into fully-earlier / fully-later /
+                // overlapping-visible-window buckets for this day.
+                const earlier = [];
+                const later = [];
+                const overlapping = [];
+                for (const ev of dayEvents) {
+                  const s = new Date(ev.start_time).getTime();
+                  const e = new Date(ev.end_time).getTime();
+                  const startInDay = s < dayStartMs ? 0 : minutesIntoDay(new Date(s));
+                  const endInDay = e >= dayEndMs ? 1440 : minutesIntoDay(new Date(e));
+                  if (endInDay <= visibleStartMin) earlier.push(ev);
+                  else if (startInDay >= visibleEndMin) later.push(ev);
+                  else overlapping.push(ev);
+                }
+
                 return (
-                  <div key={`events-${ymdLocal(date)}`} className="relative" style={{ height: totalHeight }}>
-                    {dayEvents.map((ev) => {
+                  <div
+                    key={`events-${ymdLocal(date)}`}
+                    className="relative pointer-events-none"
+                    style={{ height: totalHeight }}
+                  >
+                    {overlapping.map((ev) => {
                       const s = new Date(ev.start_time);
                       const e = new Date(ev.end_time);
-                      const top = (minutesIntoDay(s) / 1440) * totalHeight;
-                      const height = clamp(((e - s) / (1000 * 60) / 1440) * totalHeight, 18, totalHeight);
+                      const startInDay = s.getTime() < dayStartMs ? 0 : minutesIntoDay(s);
+                      const endInDay = e.getTime() >= dayEndMs ? 1440 : minutesIntoDay(e);
+                      const clampedStart = Math.max(startInDay, visibleStartMin);
+                      const clampedEnd = Math.min(endInDay, visibleEndMin);
+                      const top = ((clampedStart - visibleStartMin) / visibleWindowMin) * totalHeight;
+                      const height = clamp(
+                        ((clampedEnd - clampedStart) / visibleWindowMin) * totalHeight,
+                        18,
+                        totalHeight - top
+                      );
                       const h = timeLayouts.get(ev.id) || { leftPct: 0, widthPct: 100 };
                       return (
                         <button
@@ -1264,6 +1644,27 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                         </button>
                       );
                     })}
+
+                    {earlier.length > 0 && (
+                      <div className="absolute top-1 left-1/2 -translate-x-1/2">
+                        <OverflowPill
+                          events={earlier}
+                          direction="earlier"
+                          menuAlign="below"
+                          onEventClick={openEventDetail}
+                        />
+                      </div>
+                    )}
+                    {later.length > 0 && (
+                      <div className="absolute bottom-1 left-1/2 -translate-x-1/2">
+                        <OverflowPill
+                          events={later}
+                          direction="later"
+                          menuAlign="above"
+                          onEventClick={openEventDetail}
+                        />
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1400,53 +1801,106 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
 
           <div className="relative">
             <div className="grid" style={{ gridTemplateColumns: '64px 1fr' }}>
-              {Array.from({ length: 24 }, (_, hour) => (
-                <div key={`day-hour-${hour}`} className="contents">
-                  <div className="relative border-b border-dark-200 bg-dark-100">
-                    <div className="absolute -top-2 right-2 text-[10px] text-gray-600">
-                      {hour === 0 ? '' : `${hour % 12 === 0 ? 12 : hour % 12}${hour < 12 ? 'AM' : 'PM'}`}
+              {Array.from({ length: visibleHourCount }, (_, i) => {
+                const hour = visibleHours.start + i;
+                return (
+                  <div key={`day-hour-${hour}`} className="contents">
+                    <div className="relative border-b border-dark-200 bg-dark-100">
+                      <div className="absolute -top-2 right-2 text-[10px] text-gray-600">
+                        {i === 0 ? '' : `${hour % 12 === 0 ? 12 : hour % 12}${hour < 12 || hour === 24 ? 'AM' : 'PM'}`}
+                      </div>
+                      <div className="h-12" />
                     </div>
-                    <div className="h-12" />
+                    <div className="border-b border-dark-200 border-l border-dark-200 bg-dark-50 h-12" />
                   </div>
-                  <div className="border-b border-dark-200 border-l border-dark-200 bg-dark-50 h-12" />
-                </div>
-              ))}
+                );
+              })}
             </div>
 
-            <div className="absolute inset-0 grid pointer-events-none" style={{ gridTemplateColumns: '64px 1fr' }}>
-              <div />
-              <div className="relative" style={{ height: 24 * 48 }}>
+            <div className="absolute inset-0 grid" style={{ gridTemplateColumns: '64px 1fr' }}>
+              <div className="pointer-events-none" />
+              <div className="relative" style={{ height: visibleHourCount * 48 }}>
                 {(() => {
-                  const dayEvs = eventsForDay(selectedDate ?? currentDate);
+                  const focusDate = selectedDate ?? currentDate;
+                  const dayStartMs = startOfDay(focusDate).getTime();
+                  const dayEndMs = addDays(startOfDay(focusDate), 1).getTime();
+                  const dayEvs = eventsForDay(focusDate);
                   const timeLayouts = getDayEventTimeLayouts(dayEvs);
-                  const totalHeight = 24 * 48;
-                  return dayEvs.map((ev) => {
-                    const s = new Date(ev.start_time);
-                    const e = new Date(ev.end_time);
-                    const top = (minutesIntoDay(s) / 1440) * totalHeight;
-                    const height = clamp(((e - s) / (1000 * 60) / 1440) * totalHeight, 18, totalHeight);
-                    const h = timeLayouts.get(ev.id) || { leftPct: 0, widthPct: 100 };
-                    return (
-                      <button
-                        key={ev.id}
-                        type="button"
-                        onClick={() => openEventDetail(ev)}
-                        className="absolute rounded-md text-xs px-1.5 py-0.5 shadow pointer-events-auto cursor-pointer overflow-hidden transition-opacity hover:opacity-90"
-                        style={{
-                          top,
-                          height,
-                          left: `calc(${h.leftPct}% + 4px)`,
-                          width: `calc(${h.widthPct}% - 8px)`,
-                          right: 'auto',
-                          ...getEventTheme(ev),
-                        }}
-                        title={`${ev.title} · ${hmLocal(s)}–${hmLocal(e)}`}
-                      >
-                        <div className="font-semibold truncate">{ev.title}</div>
-                        <div className="opacity-90 truncate">{hmLocal(s)}–{hmLocal(e)}</div>
-                      </button>
-                    );
-                  });
+                  const totalHeight = visibleHourCount * 48;
+
+                  const earlier = [];
+                  const later = [];
+                  const overlapping = [];
+                  for (const ev of dayEvs) {
+                    const s = new Date(ev.start_time).getTime();
+                    const e = new Date(ev.end_time).getTime();
+                    const startInDay = s < dayStartMs ? 0 : minutesIntoDay(new Date(s));
+                    const endInDay = e >= dayEndMs ? 1440 : minutesIntoDay(new Date(e));
+                    if (endInDay <= visibleStartMin) earlier.push(ev);
+                    else if (startInDay >= visibleEndMin) later.push(ev);
+                    else overlapping.push(ev);
+                  }
+
+                  return (
+                    <>
+                      {overlapping.map((ev) => {
+                        const s = new Date(ev.start_time);
+                        const e = new Date(ev.end_time);
+                        const startInDay = s.getTime() < dayStartMs ? 0 : minutesIntoDay(s);
+                        const endInDay = e.getTime() >= dayEndMs ? 1440 : minutesIntoDay(e);
+                        const clampedStart = Math.max(startInDay, visibleStartMin);
+                        const clampedEnd = Math.min(endInDay, visibleEndMin);
+                        const top = ((clampedStart - visibleStartMin) / visibleWindowMin) * totalHeight;
+                        const height = clamp(
+                          ((clampedEnd - clampedStart) / visibleWindowMin) * totalHeight,
+                          18,
+                          totalHeight - top
+                        );
+                        const h = timeLayouts.get(ev.id) || { leftPct: 0, widthPct: 100 };
+                        return (
+                          <button
+                            key={ev.id}
+                            type="button"
+                            onClick={() => openEventDetail(ev)}
+                            className="absolute rounded-md text-xs px-1.5 py-0.5 shadow pointer-events-auto cursor-pointer overflow-hidden transition-opacity hover:opacity-90"
+                            style={{
+                              top,
+                              height,
+                              left: `calc(${h.leftPct}% + 4px)`,
+                              width: `calc(${h.widthPct}% - 8px)`,
+                              right: 'auto',
+                              ...getEventTheme(ev),
+                            }}
+                            title={`${ev.title} · ${hmLocal(s)}–${hmLocal(e)}`}
+                          >
+                            <div className="font-semibold truncate">{ev.title}</div>
+                            <div className="opacity-90 truncate">{hmLocal(s)}–{hmLocal(e)}</div>
+                          </button>
+                        );
+                      })}
+
+                      {earlier.length > 0 && (
+                        <div className="absolute top-1 left-1/2 -translate-x-1/2">
+                          <OverflowPill
+                            events={earlier}
+                            direction="earlier"
+                            menuAlign="below"
+                            onEventClick={openEventDetail}
+                          />
+                        </div>
+                      )}
+                      {later.length > 0 && (
+                        <div className="absolute bottom-1 left-1/2 -translate-x-1/2">
+                          <OverflowPill
+                            events={later}
+                            direction="later"
+                            menuAlign="above"
+                            onEventClick={openEventDetail}
+                          />
+                        </div>
+                      )}
+                    </>
+                  );
                 })()}
               </div>
             </div>
@@ -1469,19 +1923,25 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                 Person
               </div>
               <div className="border-b border-l border-dark-300 relative h-9">
-                {Array.from({ length: 24 }, (_, hour) => (
-                  <div
-                    key={`pdh-${hour}`}
-                    className="absolute top-0 bottom-0 border-l border-dark-200 text-[10px] text-gray-500"
-                    style={{ left: `${(hour / 24) * 100}%`, width: `${100 / 24}%` }}
-                  >
-                    <span className="absolute top-1 left-1 whitespace-nowrap">
-                      {hour === 0
-                        ? ''
-                        : `${hour % 12 === 0 ? 12 : hour % 12}${hour < 12 ? 'a' : 'p'}`}
-                    </span>
-                  </div>
-                ))}
+                {Array.from({ length: visibleHourCount }, (_, i) => {
+                  const hour = visibleHours.start + i;
+                  return (
+                    <div
+                      key={`pdh-${hour}`}
+                      className="absolute top-0 bottom-0 border-l border-dark-200 text-[10px] text-gray-500"
+                      style={{
+                        left: `${(i / visibleHourCount) * 100}%`,
+                        width: `${100 / visibleHourCount}%`,
+                      }}
+                    >
+                      <span className="absolute top-1 left-1 whitespace-nowrap">
+                        {i === 0
+                          ? ''
+                          : `${hour % 12 === 0 ? 12 : hour % 12}${hour < 12 || hour === 24 ? 'a' : 'p'}`}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -1492,7 +1952,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
             ) : (
               groupMembers.map((m) => {
                 const memberColor = memberColorById.get(m.user_id) || m.color;
-                const memberEvents = eventsInRange
+                const memberEventsAll = eventsInRange
                   .filter((ev) => {
                     if (ev.created_by !== m.user_id) return false;
                     const s = new Date(ev.start_time).getTime();
@@ -1500,6 +1960,22 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                     return en > dayStartMs && s < dayEndMs;
                   })
                   .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+
+                // Partition into earlier / later / overlapping-window buckets
+                // so events outside the visible range become pills rather than
+                // getting squished off-screen.
+                const earlier = [];
+                const later = [];
+                const overlapping = [];
+                for (const ev of memberEventsAll) {
+                  const s = new Date(ev.start_time).getTime();
+                  const e = new Date(ev.end_time).getTime();
+                  const startInDay = s < dayStartMs ? 0 : minutesIntoDay(new Date(s));
+                  const endInDay = e >= dayEndMs ? 1440 : minutesIntoDay(new Date(e));
+                  if (endInDay <= visibleStartMin) earlier.push(ev);
+                  else if (startInDay >= visibleEndMin) later.push(ev);
+                  else overlapping.push(ev);
+                }
                 return (
                   <div
                     key={`pdayrow-${m.user_id}`}
@@ -1518,15 +1994,15 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                     </div>
                     <div className="relative h-12 border-l border-dark-200 bg-dark-50">
                       {/* Hour grid lines */}
-                      {Array.from({ length: 24 }, (_, hour) => (
+                      {Array.from({ length: visibleHourCount }, (_, i) => (
                         <div
-                          key={`pdaygrid-${m.user_id}-${hour}`}
+                          key={`pdaygrid-${m.user_id}-${i}`}
                           aria-hidden="true"
                           className="absolute top-0 bottom-0 border-l border-dark-200"
-                          style={{ left: `${(hour / 24) * 100}%` }}
+                          style={{ left: `${(i / visibleHourCount) * 100}%` }}
                         />
                       ))}
-                      {memberEvents.map((ev) => {
+                      {overlapping.map((ev) => {
                         const s = new Date(ev.start_time);
                         const e = new Date(ev.end_time);
                         const startMin = clamp(
@@ -1539,8 +2015,10 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                           startMin + 5,
                           1440
                         );
-                        const left = (startMin / 1440) * 100;
-                        const width = ((endMin - startMin) / 1440) * 100;
+                        const clampedStart = Math.max(startMin, visibleStartMin);
+                        const clampedEnd = Math.min(endMin, visibleEndMin);
+                        const left = ((clampedStart - visibleStartMin) / visibleWindowMin) * 100;
+                        const width = ((clampedEnd - clampedStart) / visibleWindowMin) * 100;
                         return (
                           <button
                             key={ev.id}
@@ -1549,7 +2027,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                             className="absolute top-1 bottom-1 rounded-md text-[10px] px-1.5 shadow overflow-hidden transition-opacity hover:opacity-90 text-left"
                             style={{
                               left: `${left}%`,
-                              width: `${width}%`,
+                              width: `${Math.max(width, 0.5)}%`,
                               ...getEventTheme(ev),
                             }}
                             title={`${ev.title} · ${hmLocal(s)}–${hmLocal(e)}`}
@@ -1560,6 +2038,27 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                           </button>
                         );
                       })}
+
+                      {earlier.length > 0 && (
+                        <div className="absolute top-1/2 left-1 -translate-y-1/2 z-10">
+                          <OverflowPill
+                            events={earlier}
+                            direction="earlier"
+                            menuAlign="right"
+                            onEventClick={openEventDetail}
+                          />
+                        </div>
+                      )}
+                      {later.length > 0 && (
+                        <div className="absolute top-1/2 right-1 -translate-y-1/2 z-10">
+                          <OverflowPill
+                            events={later}
+                            direction="later"
+                            menuAlign="left"
+                            onEventClick={openEventDetail}
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
