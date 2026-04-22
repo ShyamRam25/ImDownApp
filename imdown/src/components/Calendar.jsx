@@ -241,6 +241,94 @@ function getDayEventTimeLayouts(events) {
  * Pass `menuAlign` to choose where the popover appears relative to the pill
  * ("below" | "above" | "right" | "left").
  */
+// Grey "Busy" marker used in People-mode to indicate a group member is busy
+// at a given time without revealing the underlying event's title/details.
+// Clicking it toggles a small popover that shows ONLY the time range.
+//
+// Accepts `className` / `style` so callers can render it either as an inline
+// chip (week cell) or as an absolutely-positioned horizontal bar (day
+// timeline). `layout` controls whether the label uses the "Busy" prefix or a
+// short dot-icon suitable for a narrow timeline bar.
+function BusyBlock({ start, end, className = '', style, layout = 'chip' }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const timeRange = `${hmLocal(start)}\u2013${hmLocal(end)}`;
+  const tooltip = `Busy \u00b7 ${timeRange}`;
+
+  // For the timeline "bar" variant, the wrapper itself is absolutely
+  // positioned (left/width supplied by the caller) and fills the row's
+  // height. The inner div uses `h-full w-full` so the button (which is
+  // `absolute inset-0`) has a non-zero box to fill — otherwise it
+  // collapses into a 0-height sliver.
+  const wrapperClass =
+    layout === 'bar'
+      ? `relative h-full w-full ${className}`
+      : `relative ${className}`;
+
+  return (
+    <div ref={ref} className={wrapperClass} style={style}>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        title={tooltip}
+        aria-label={tooltip}
+        className={
+          layout === 'bar'
+            ? 'absolute inset-0 rounded-md bg-dark-200/70 border border-dark-300 text-gray-400 text-[10px] px-1.5 overflow-hidden transition-opacity hover:bg-dark-200 text-left flex items-center'
+            : 'w-full truncate text-left rounded px-1.5 py-0.5 text-[11px] leading-tight bg-dark-200/70 border border-dark-300 text-gray-400 hover:bg-dark-200 transition-opacity'
+        }
+        style={
+          layout === 'bar'
+            ? {
+                backgroundImage:
+                  'repeating-linear-gradient(135deg, rgba(255,255,255,0.04) 0, rgba(255,255,255,0.04) 4px, transparent 4px, transparent 8px)',
+              }
+            : undefined
+        }
+      >
+        {layout === 'bar' ? (
+          <span className="truncate">Busy</span>
+        ) : (
+          <>
+            <span className="opacity-80 mr-1">{hmLocal(start)}</span>
+            <span className="font-semibold">Busy</span>
+          </>
+        )}
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          aria-label={tooltip}
+          className="absolute z-30 top-full left-1/2 -translate-x-1/2 mt-1 w-44 rounded-lg border border-dark-300 bg-dark-100 shadow-2xl px-3 py-2 text-xs text-gray-200"
+        >
+          <div className="font-semibold text-gray-300">Busy</div>
+          <div className="text-gray-400">{timeRange}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OverflowPill({ events, direction, menuAlign = 'below', onEventClick }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -297,24 +385,41 @@ function OverflowPill({ events, direction, menuAlign = 'below', onEventClick }) 
           className={`absolute z-30 w-56 max-h-56 overflow-y-auto rounded-lg border border-dark-300 bg-dark-100 shadow-2xl ${menuPositionClass}`}
         >
           <ul className="divide-y divide-dark-300">
-            {events.map((ev) => (
-              <li key={ev.id}>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setOpen(false);
-                    onEventClick?.(ev);
-                  }}
-                  className="w-full text-left px-3 py-2 text-xs hover:bg-dark-200 text-gray-200"
-                >
-                  <div className="font-semibold truncate">{ev.title}</div>
-                  <div className="text-gray-400">
-                    {hmLocal(ev.start_time)}&ndash;{hmLocal(ev.end_time)}
-                  </div>
-                </button>
-              </li>
-            ))}
+            {events.map((ev) => {
+              // Entries without a `title` are busy-only placeholders: render
+              // them as non-clickable "Busy" rows so we don't reveal details
+              // of events outside the selected group.
+              if (!ev.title) {
+                return (
+                  <li key={ev.id}>
+                    <div className="w-full px-3 py-2 text-xs text-gray-400">
+                      <div className="font-semibold text-gray-300">Busy</div>
+                      <div className="text-gray-400">
+                        {hmLocal(ev.start_time)}&ndash;{hmLocal(ev.end_time)}
+                      </div>
+                    </div>
+                  </li>
+                );
+              }
+              return (
+                <li key={ev.id}>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpen(false);
+                      onEventClick?.(ev);
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-dark-200 text-gray-200"
+                  >
+                    <div className="font-semibold truncate">{ev.title}</div>
+                    <div className="text-gray-400">
+                      {hmLocal(ev.start_time)}&ndash;{hmLocal(ev.end_time)}
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
@@ -334,6 +439,11 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     return stored === 'people' ? 'people' : 'groups';
   });
   const [groupMembers, setGroupMembers] = useState([]);
+  // Map<user_id, Array<{ id, start_time, end_time }>> of busy-time slivers
+  // for People-mode rendering. Populated only when a specific group is
+  // selected and `mode === 'people'`. Title/location/details are intentionally
+  // not fetched so the UI can render opaque "Busy" blocks.
+  const [busyByUser, setBusyByUser] = useState(() => new Map());
 
   const [events, setEvents] = useState([]);
   const [eventsLoading, setEventsLoading] = useState(false);
@@ -830,6 +940,109 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
       return en > startMs && s < endMs;
     });
   }, [events, visibleStart, visibleEnd, hiddenEventIds]);
+
+  // IDs of events that are already rendered as full colored chips for the
+  // selected group. Busy-overlay rendering uses this to avoid double-showing
+  // an event as both colored and grey for the same person.
+  const visibleEventIds = useMemo(
+    () => new Set(eventsInRange.map((e) => e.id)),
+    [eventsInRange]
+  );
+
+  // ── People-mode busy overlay ──────────────────────────────────────────
+  // Fetch a minimal "free/busy" projection for each member of the selected
+  // group: only `{ id, start_time, end_time }`, never titles/locations.
+  // Two sources are merged per member:
+  //   1. Events they CREATED (any group, including private)
+  //   2. Events they RSVP'd `going` to (created by anyone)
+  // RSVP `maybe` is intentionally treated as free.
+  useEffect(() => {
+    let cancelled = false;
+    if (
+      selectedGroupId === 'all' ||
+      mode !== 'people' ||
+      !user?.id ||
+      groupMembers.length === 0
+    ) {
+      setBusyByUser(new Map());
+      return () => { cancelled = true; };
+    }
+
+    const memberIds = groupMembers.map((m) => m.user_id);
+    const startIso = visibleStart.toISOString();
+    const endIso = visibleEnd.toISOString();
+    const visibleStartMs = visibleStart.getTime();
+    const visibleEndMs = visibleEnd.getTime();
+
+    (async () => {
+      try {
+        // Run both queries in parallel. We don't range-filter the RSVP join
+        // server-side; we overlap-filter the joined rows client-side below.
+        const [createdRes, goingRes] = await Promise.all([
+          supabase
+            .from('events')
+            .select('id, created_by, start_time, end_time')
+            .in('created_by', memberIds)
+            .lt('start_time', endIso)
+            .gt('end_time', startIso),
+          supabase
+            .from('event_rsvps')
+            .select('user_id, events(id, start_time, end_time)')
+            .in('user_id', memberIds)
+            .eq('status', 'going'),
+        ]);
+
+        if (createdRes.error) throw createdRes.error;
+        if (goingRes.error) throw goingRes.error;
+        if (cancelled) return;
+
+        const next = new Map();
+        const seenPerUser = new Map();
+
+        const push = (userId, ev) => {
+          if (!userId || !ev || !ev.id) return;
+          const s = new Date(ev.start_time).getTime();
+          const e = new Date(ev.end_time).getTime();
+          if (Number.isNaN(s) || Number.isNaN(e)) return;
+          if (e <= visibleStartMs || s >= visibleEndMs) return;
+          let seen = seenPerUser.get(userId);
+          if (!seen) {
+            seen = new Set();
+            seenPerUser.set(userId, seen);
+          }
+          if (seen.has(ev.id)) return;
+          seen.add(ev.id);
+          let bucket = next.get(userId);
+          if (!bucket) {
+            bucket = [];
+            next.set(userId, bucket);
+          }
+          bucket.push({ id: ev.id, start_time: ev.start_time, end_time: ev.end_time });
+        };
+
+        for (const row of createdRes.data || []) {
+          push(row.created_by, row);
+        }
+        for (const row of goingRes.data || []) {
+          // Supabase may return `events` as an object or an array depending
+          // on the relationship cardinality; normalize here.
+          const ev = Array.isArray(row.events) ? row.events[0] : row.events;
+          push(row.user_id, ev);
+        }
+
+        for (const bucket of next.values()) {
+          bucket.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+        }
+
+        setBusyByUser(next);
+      } catch (err) {
+        console.error('Failed to fetch busy times:', err.message);
+        if (!cancelled) setBusyByUser(new Map());
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [selectedGroupId, mode, user?.id, groupMembers, visibleStart, visibleEnd]);
 
   const eventsForDay = (date) => {
     const dayStart = startOfDay(date).getTime();
@@ -1742,37 +1955,64 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                   {weekDates.map((date) => {
                     const dayStart = startOfDay(date).getTime();
                     const dayEnd = addDays(startOfDay(date), 1).getTime();
-                    const dayEvents = eventsInRange
-                      .filter((ev) => {
-                        if (ev.created_by !== m.user_id) return false;
-                        const s = new Date(ev.start_time).getTime();
-                        const en = new Date(ev.end_time).getTime();
-                        return en > dayStart && s < dayEnd;
-                      })
-                      .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+                    const dayEvents = eventsInRange.filter((ev) => {
+                      if (ev.created_by !== m.user_id) return false;
+                      const s = new Date(ev.start_time).getTime();
+                      const en = new Date(ev.end_time).getTime();
+                      return en > dayStart && s < dayEnd;
+                    });
+                    // Gray busy entries for this member, scoped to this day
+                    // and excluding any event already shown as a colored chip
+                    // (same event id in the visible group set).
+                    const busyForMember = (busyByUser.get(m.user_id) || []).filter((b) => {
+                      if (visibleEventIds.has(b.id)) return false;
+                      const s = new Date(b.start_time).getTime();
+                      const en = new Date(b.end_time).getTime();
+                      return en > dayStart && s < dayEnd;
+                    });
+                    // Tag both lists so a single sort keeps them interleaved
+                    // in chronological order (per the plan: "Sort all chips
+                    // in the cell by start time so grey and colored intermix").
+                    const cellItems = [
+                      ...dayEvents.map((ev) => ({ kind: 'event', item: ev, startMs: new Date(ev.start_time).getTime() })),
+                      ...busyForMember.map((b) => ({ kind: 'busy', item: b, startMs: new Date(b.start_time).getTime() })),
+                    ].sort((a, b) => a.startMs - b.startMs);
                     return (
                       <div
                         key={`pweekcell-${m.user_id}-${ymdLocal(date)}`}
                         className="border-l border-dark-200 bg-dark-50 p-1 min-h-[64px] flex flex-col gap-1"
                       >
-                        {dayEvents.length === 0 ? (
+                        {cellItems.length === 0 ? (
                           <span className="m-auto text-[10px] uppercase tracking-wide text-gray-600">
                             free
                           </span>
                         ) : (
-                          dayEvents.map((ev) => (
-                            <button
-                              key={ev.id}
-                              type="button"
-                              onClick={() => openEventDetail(ev)}
-                              className="w-full truncate text-left rounded px-1.5 py-0.5 text-[11px] leading-tight transition-opacity hover:opacity-90"
-                              style={getEventTheme(ev)}
-                              title={`${ev.title} · ${hmLocal(ev.start_time)}–${hmLocal(ev.end_time)}`}
-                            >
-                              <span className="opacity-90 mr-1">{hmLocal(ev.start_time)}</span>
-                              <span className="font-semibold">{ev.title}</span>
-                            </button>
-                          ))
+                          cellItems.map(({ kind, item }) => {
+                            if (kind === 'busy') {
+                              return (
+                                <BusyBlock
+                                  key={`b-${item.id}`}
+                                  start={item.start_time}
+                                  end={item.end_time}
+                                  layout="chip"
+                                />
+                              );
+                            }
+                            const ev = item;
+                            return (
+                              <button
+                                key={ev.id}
+                                type="button"
+                                onClick={() => openEventDetail(ev)}
+                                className="w-full truncate text-left rounded px-1.5 py-0.5 text-[11px] leading-tight transition-opacity hover:opacity-90"
+                                style={getEventTheme(ev)}
+                                title={`${ev.title} · ${hmLocal(ev.start_time)}–${hmLocal(ev.end_time)}`}
+                              >
+                                <span className="opacity-90 mr-1">{hmLocal(ev.start_time)}</span>
+                                <span className="font-semibold">{ev.title}</span>
+                              </button>
+                            );
+                          })
                         )}
                       </div>
                     );
@@ -1961,6 +2201,15 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                   })
                   .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
 
+                // Grey busy entries for this member on this day, excluding
+                // any event already being rendered as a colored bar.
+                const memberBusyAll = (busyByUser.get(m.user_id) || []).filter((b) => {
+                  if (visibleEventIds.has(b.id)) return false;
+                  const s = new Date(b.start_time).getTime();
+                  const en = new Date(b.end_time).getTime();
+                  return en > dayStartMs && s < dayEndMs;
+                });
+
                 // Partition into earlier / later / overlapping-window buckets
                 // so events outside the visible range become pills rather than
                 // getting squished off-screen.
@@ -1976,6 +2225,24 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                   else if (startInDay >= visibleEndMin) later.push(ev);
                   else overlapping.push(ev);
                 }
+                // Same partitioning for busy entries. Busy bars render inside
+                // the visible window; overflow pills also count busy entries
+                // so the total count accurately reflects "how many things are
+                // hidden to the earlier/later side" for this person.
+                const busyOverlapping = [];
+                for (const b of memberBusyAll) {
+                  const s = new Date(b.start_time).getTime();
+                  const e = new Date(b.end_time).getTime();
+                  const startInDay = s < dayStartMs ? 0 : minutesIntoDay(new Date(s));
+                  const endInDay = e >= dayEndMs ? 1440 : minutesIntoDay(new Date(e));
+                  if (endInDay <= visibleStartMin) earlier.push(b);
+                  else if (startInDay >= visibleEndMin) later.push(b);
+                  else busyOverlapping.push(b);
+                }
+                // Keep overflow pills sorted chronologically regardless of
+                // whether entries are colored events or grey busy blocks.
+                earlier.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+                later.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
                 return (
                   <div
                     key={`pdayrow-${m.user_id}`}
@@ -2002,6 +2269,43 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                           style={{ left: `${(i / visibleHourCount) * 100}%` }}
                         />
                       ))}
+                      {/* Grey busy bars render first so colored group
+                          events can visually stack on top if they share
+                          a window. */}
+                      {busyOverlapping.map((b) => {
+                        const s = new Date(b.start_time);
+                        const e = new Date(b.end_time);
+                        const startMin = clamp(
+                          s.getTime() < dayStartMs ? 0 : minutesIntoDay(s),
+                          0,
+                          1440
+                        );
+                        const endMin = clamp(
+                          e.getTime() >= dayEndMs ? 1440 : minutesIntoDay(e),
+                          startMin + 5,
+                          1440
+                        );
+                        const clampedStart = Math.max(startMin, visibleStartMin);
+                        const clampedEnd = Math.min(endMin, visibleEndMin);
+                        const left = ((clampedStart - visibleStartMin) / visibleWindowMin) * 100;
+                        const width = ((clampedEnd - clampedStart) / visibleWindowMin) * 100;
+                        return (
+                          <div
+                            key={`busy-${b.id}`}
+                            className="absolute top-1 bottom-1"
+                            style={{
+                              left: `${left}%`,
+                              width: `${Math.max(width, 0.5)}%`,
+                            }}
+                          >
+                            <BusyBlock
+                              start={b.start_time}
+                              end={b.end_time}
+                              layout="bar"
+                            />
+                          </div>
+                        );
+                      })}
                       {overlapping.map((ev) => {
                         const s = new Date(ev.start_time);
                         const e = new Date(ev.end_time);
