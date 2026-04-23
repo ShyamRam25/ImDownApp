@@ -1274,19 +1274,32 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
   return (
     <div className={`w-full mx-auto p-6 bg-dark-50 rounded-2xl border border-dark-200 transition-all duration-200 ${view === 'month' ? 'max-w-4xl' : 'max-w-7xl'}`}>
       {/* Calendar Header */}
-      <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
-        <button
-          onClick={goToPrevious}
-          className="p-2 hover:bg-dark-200 rounded-lg transition-colors text-gray-400 hover:text-neon"
-          aria-label={view === 'month' ? 'Previous month' : view === 'week' ? 'Previous week' : 'Previous day'}
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-        </button>
+      <div className="mb-6 space-y-3">
+        {/* Date row */}
+        <div className="flex items-center justify-center gap-3">
+          <button
+            onClick={goToPrevious}
+            className="p-2 hover:bg-dark-200 rounded-lg transition-colors text-gray-400 hover:text-neon"
+            aria-label={view === 'month' ? 'Previous month' : view === 'week' ? 'Previous week' : 'Previous day'}
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <h2 className="text-2xl font-bold text-gray-100 tracking-tight">{headerText}</h2>
+          <button
+            onClick={goToNext}
+            className="p-2 hover:bg-dark-200 rounded-lg transition-colors text-gray-400 hover:text-neon"
+            aria-label={view === 'month' ? 'Next month' : view === 'week' ? 'Next week' : 'Next day'}
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
 
-        <div className="flex items-center gap-4">
-          <h2 className="text-2xl font-bold text-gray-100">{headerText}</h2>
+        {/* Controls row */}
+        <div className="flex items-center justify-center gap-3 flex-wrap">
           <button onClick={goToToday} className="btn-primary text-sm py-2 shrink-0 whitespace-nowrap">
             Today
           </button>
@@ -1587,16 +1600,6 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
             )}
           </div>
         </div>
-
-        <button
-          onClick={goToNext}
-          className="p-2 hover:bg-dark-200 rounded-lg transition-colors text-gray-400 hover:text-neon"
-          aria-label={view === 'month' ? 'Next month' : view === 'week' ? 'Next week' : 'Next day'}
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-        </button>
       </div>
 
       {/* Color legend: reflects the active mode (groups vs people).
