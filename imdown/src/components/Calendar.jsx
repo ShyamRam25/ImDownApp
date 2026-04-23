@@ -949,21 +949,31 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     });
   }, [events, visibleStart, visibleEnd, hiddenEventIds]);
 
-  // Per-creator set of event IDs that are already rendered as full colored
-  // chips in People mode. Busy-overlay rendering uses this to avoid
-  // double-showing an event as both colored and grey FOR THE SAME PERSON.
-  // It must be keyed by creator because People-mode rows only render events
-  // where `ev.created_by === member.user_id` — an RSVP on someone else's
-  // event should still appear as a grey busy block on the RSVP'er's row.
-  const visibleEventIdsByCreator = useMemo(() => {
+  // Per-member set of event IDs that render as full colored chips on that
+  // member's row in People mode. A member "owns" an event visually if they
+  // created it OR RSVP'd `going` / `maybe` to it — both should show the
+  // colored chip with details (creator's color is preserved via
+  // getEventTheme for attribution). The busy-overlay renderer uses this to
+  // avoid showing the same event as both colored AND grey on a single row.
+  const visibleColoredIdsByMember = useMemo(() => {
     const map = new Map();
-    for (const e of eventsInRange) {
-      let set = map.get(e.created_by);
+    const add = (uid, eid) => {
+      if (!uid) return;
+      let set = map.get(uid);
       if (!set) {
         set = new Set();
-        map.set(e.created_by, set);
+        map.set(uid, set);
       }
-      set.add(e.id);
+      set.add(eid);
+    };
+    for (const ev of eventsInRange) {
+      add(ev.created_by, ev.id);
+      const rsvps = ev.event_rsvps || [];
+      for (const r of rsvps) {
+        if (r.status === 'going' || r.status === 'maybe') {
+          add(r.user_id, ev.id);
+        }
+      }
     }
     return map;
   }, [eventsInRange]);
@@ -1991,20 +2001,22 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                   {weekDates.map((date) => {
                     const dayStart = startOfDay(date).getTime();
                     const dayEnd = addDays(startOfDay(date), 1).getTime();
+                    // Events rendered as colored chips on THIS member's row:
+                    // anything they created or RSVP'd going/maybe to within
+                    // the selected group (and current visible range).
+                    const coloredForMember =
+                      visibleColoredIdsByMember.get(m.user_id) || null;
                     const dayEvents = eventsInRange.filter((ev) => {
-                      if (ev.created_by !== m.user_id) return false;
+                      if (!coloredForMember || !coloredForMember.has(ev.id)) return false;
                       const s = new Date(ev.start_time).getTime();
                       const en = new Date(ev.end_time).getTime();
                       return en > dayStart && s < dayEnd;
                     });
-                    // Gray busy entries for this member, scoped to this day
-                    // and excluding only the events already rendered as a
-                    // colored chip on THIS member's row (i.e. events THEY
-                    // created). RSVPs on other members' events remain grey.
-                    const ownColoredIds =
-                      visibleEventIdsByCreator.get(m.user_id) || null;
+                    // Grey busy entries for this member, scoped to this day
+                    // and excluding events already rendered as a colored
+                    // chip on THIS member's row so we don't double-render.
                     const busyForMember = (busyByUser.get(m.user_id) || []).filter((b) => {
-                      if (ownColoredIds && ownColoredIds.has(b.id)) return false;
+                      if (coloredForMember && coloredForMember.has(b.id)) return false;
                       const s = new Date(b.start_time).getTime();
                       const en = new Date(b.end_time).getTime();
                       return en > dayStart && s < dayEnd;
@@ -2231,9 +2243,14 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
             ) : (
               groupMembers.map((m) => {
                 const memberColor = memberColorById.get(m.user_id) || m.color;
+                // Events rendered as colored bars on THIS member's row:
+                // anything they created or RSVP'd going/maybe to within the
+                // selected group (and current visible range).
+                const coloredForMember =
+                  visibleColoredIdsByMember.get(m.user_id) || null;
                 const memberEventsAll = eventsInRange
                   .filter((ev) => {
-                    if (ev.created_by !== m.user_id) return false;
+                    if (!coloredForMember || !coloredForMember.has(ev.id)) return false;
                     const s = new Date(ev.start_time).getTime();
                     const en = new Date(ev.end_time).getTime();
                     return en > dayStartMs && s < dayEndMs;
@@ -2241,13 +2258,10 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                   .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
 
                 // Grey busy entries for this member on this day, excluding
-                // only events already rendered as a colored bar on THIS
-                // member's row (events they created). RSVPs on other
-                // members' events remain as grey busy blocks.
-                const ownColoredIds =
-                  visibleEventIdsByCreator.get(m.user_id) || null;
+                // events already rendered as a colored bar on THIS member's
+                // row so we don't double-render.
                 const memberBusyAll = (busyByUser.get(m.user_id) || []).filter((b) => {
-                  if (ownColoredIds && ownColoredIds.has(b.id)) return false;
+                  if (coloredForMember && coloredForMember.has(b.id)) return false;
                   const s = new Date(b.start_time).getTime();
                   const en = new Date(b.end_time).getTime();
                   return en > dayStartMs && s < dayEndMs;
