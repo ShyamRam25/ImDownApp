@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
+const GROUP_COLOR_PALETTE = [
+  '#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16',
+  '#22c55e', '#10b981', '#14b8a6', '#06b6d4', '#0ea5e9',
+  '#3b82f6', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef',
+  '#ec4899', '#f43f5e', '#00E676',
+];
+
+function randomGroupColor() {
+  return GROUP_COLOR_PALETTE[Math.floor(Math.random() * GROUP_COLOR_PALETTE.length)];
+}
+
 function GroupInvitations({ user, onInvitationsChanged }) {
   const [invites, setInvites] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -82,7 +93,7 @@ function GroupInvitations({ user, onInvitationsChanged }) {
         group_id: row.group_id,
         user_id: user.id,
         role: 'member',
-        color: '#00E676',
+        color: randomGroupColor(),
       });
 
       const dup =

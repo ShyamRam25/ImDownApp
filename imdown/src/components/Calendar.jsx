@@ -1262,7 +1262,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
   // ── Render ──────────────────────────────────────────────────────────
 
   return (
-    <div className="w-full max-w-4xl mx-auto p-6 bg-dark-50 rounded-2xl border border-dark-200">
+    <div className={`w-full mx-auto p-6 bg-dark-50 rounded-2xl border border-dark-200 transition-all duration-200 ${view === 'month' ? 'max-w-4xl' : 'max-w-7xl'}`}>
       {/* Calendar Header */}
       <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
         <button
