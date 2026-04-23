@@ -47,7 +47,11 @@ function App() {
         .filter(Boolean)
       setGroups(userGroups)
 
-      if (selectedGroupId !== 'all' && !userGroups.some((g) => g.id === selectedGroupId)) {
+      if (
+        selectedGroupId !== 'all' &&
+        selectedGroupId !== 'personal' &&
+        !userGroups.some((g) => g.id === selectedGroupId)
+      ) {
         setSelectedGroupId('all')
         localStorage.setItem(SELECTED_GROUP_KEY, 'all')
       }
@@ -108,6 +112,7 @@ function App() {
                 className="input-field py-2 px-3 text-sm font-medium w-auto"
               >
                 <option value="all">All Groups</option>
+                <option value="personal">Personal</option>
                 {groups.map((g) => (
                   <option key={g.id} value={g.id}>{g.name}</option>
                 ))}

@@ -8,7 +8,9 @@ const GoogleCalendarImport = ({ user, groups, onClose, onImported }) => {
   const [step, setStep] = useState('connect'); // 'connect' | 'preview' | 'importing' | 'done'
   const [gcalEvents, setGcalEvents] = useState([]);
   const [selected, setSelected] = useState(new Set());
-  const [targetGroups, setTargetGroups] = useState(groups.length > 0 ? [groups[0].id] : []);
+  // Default to no groups selected — imported events land on the user's
+  // personal calendar unless they explicitly add them to a group.
+  const [targetGroups, setTargetGroups] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [importedCount, setImportedCount] = useState(0);
@@ -52,7 +54,6 @@ const GoogleCalendarImport = ({ user, groups, onClose, onImported }) => {
 
   const handleImport = async () => {
     if (selected.size === 0) { setError('Select at least one event.'); return; }
-    if (targetGroups.length === 0) { setError('Select at least one group.'); return; }
 
     setStep('importing');
     setError('');
@@ -85,9 +86,11 @@ const GoogleCalendarImport = ({ user, groups, onClose, onImported }) => {
           continue;
         }
 
-        await supabase
-          .from('event_groups')
-          .insert(targetGroups.map((gid) => ({ event_id: event.id, group_id: gid })));
+        if (targetGroups.length > 0) {
+          await supabase
+            .from('event_groups')
+            .insert(targetGroups.map((gid) => ({ event_id: event.id, group_id: gid })));
+        }
 
         count++;
       }
@@ -224,31 +227,40 @@ const GoogleCalendarImport = ({ user, groups, onClose, onImported }) => {
 
               {/* Target groups */}
               <div>
-                <div className="text-sm font-bold text-gray-200 mb-2">Add to which group(s)?</div>
+                <div className="text-sm font-bold text-gray-200 mb-2">Add to which group(s)? (optional)</div>
                 <div className="border border-dark-300 rounded-lg p-3 bg-dark-100 max-h-40 overflow-y-auto space-y-2">
                   {groups.length === 0 ? (
-                    <p className="text-gray-500 text-sm">Join a group first to import events.</p>
+                    <p className="text-gray-500 text-sm">
+                      You&rsquo;re not in any groups yet &mdash; events will be added to your Personal calendar.
+                    </p>
                   ) : (
-                    groups.map((g) => {
-                      const checked = targetGroups.includes(g.id);
-                      return (
-                        <label key={g.id} className="flex items-center justify-between gap-3 cursor-pointer select-none">
-                          <span className="text-sm text-gray-300">{g.name}</span>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={(e) => {
-                              setTargetGroups((prev) =>
-                                e.target.checked
-                                  ? Array.from(new Set([...prev, g.id]))
-                                  : prev.filter((x) => x !== g.id)
-                              );
-                            }}
-                            className="h-4 w-4 accent-neon"
-                          />
-                        </label>
-                      );
-                    })
+                    <>
+                      {groups.map((g) => {
+                        const checked = targetGroups.includes(g.id);
+                        return (
+                          <label key={g.id} className="flex items-center justify-between gap-3 cursor-pointer select-none">
+                            <span className="text-sm text-gray-300">{g.name}</span>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                setTargetGroups((prev) =>
+                                  e.target.checked
+                                    ? Array.from(new Set([...prev, g.id]))
+                                    : prev.filter((x) => x !== g.id)
+                                );
+                              }}
+                              className="h-4 w-4 accent-neon"
+                            />
+                          </label>
+                        );
+                      })}
+                      {targetGroups.length === 0 && (
+                        <p className="text-xs text-gray-500 italic pt-1">
+                          No groups selected &mdash; events will be added to your Personal calendar.
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
@@ -262,7 +274,7 @@ const GoogleCalendarImport = ({ user, groups, onClose, onImported }) => {
                 </button>
                 <button
                   onClick={handleImport}
-                  disabled={selected.size === 0 || targetGroups.length === 0}
+                  disabled={selected.size === 0}
                   className="btn-primary"
                 >
                   Import {selected.size} Event{selected.size !== 1 ? 's' : ''}
