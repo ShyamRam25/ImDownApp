@@ -89,14 +89,14 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-dark py-6 px-4">
-      <div className="container mx-auto">
+    <div className="h-screen bg-dark flex flex-col overflow-hidden py-4 px-4">
+      <div className="container mx-auto flex flex-col flex-1 min-h-0">
         {/* Header */}
-        <div className="flex justify-between items-center mb-6 flex-wrap gap-4 bg-dark-50 border border-dark-200 rounded-2xl px-6 py-4">
+        <div className="flex justify-between items-center mb-3 flex-wrap gap-3 bg-dark-50 border border-dark-200 rounded-2xl px-5 py-3 shrink-0">
           <img
             src="/images/LogoPhoto.png"
             alt="ImDown"
-            className="h-14 w-auto rounded-xl"
+            className="h-10 w-auto rounded-xl"
           />
 
           <div className="flex items-center gap-3 flex-wrap">

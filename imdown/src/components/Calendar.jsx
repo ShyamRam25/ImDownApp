@@ -1301,21 +1301,34 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
   // ── Render ──────────────────────────────────────────────────────────
 
   return (
-    <div className={`w-full mx-auto p-6 bg-dark-50 rounded-2xl border border-dark-200 transition-all duration-200 ${view === 'month' ? 'max-w-4xl' : 'max-w-7xl'}`}>
+    <div className={`w-full mx-auto p-4 bg-dark-50 rounded-2xl border border-dark-200 transition-all duration-200 flex flex-col min-h-0 flex-1 ${view === 'month' ? 'max-w-4xl' : 'max-w-7xl'}`}>
       {/* Calendar Header */}
-      <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
-        <button
-          onClick={goToPrevious}
-          className="p-2 hover:bg-dark-200 rounded-lg transition-colors text-gray-400 hover:text-neon"
-          aria-label={view === 'month' ? 'Previous month' : view === 'week' ? 'Previous week' : 'Previous day'}
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-        </button>
+      <div className="mb-3 space-y-2 shrink-0">
+        {/* Date row */}
+        <div className="flex items-center justify-center gap-3">
+          <button
+            onClick={goToPrevious}
+            className="p-2 hover:bg-dark-200 rounded-lg transition-colors text-gray-400 hover:text-neon"
+            aria-label={view === 'month' ? 'Previous month' : view === 'week' ? 'Previous week' : 'Previous day'}
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <h2 className="text-2xl font-bold text-gray-100 tracking-tight">{headerText}</h2>
+          <button
+            onClick={goToNext}
+            className="p-2 hover:bg-dark-200 rounded-lg transition-colors text-gray-400 hover:text-neon"
+            aria-label={view === 'month' ? 'Next month' : view === 'week' ? 'Next week' : 'Next day'}
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
 
-        <div className="flex items-center gap-4">
-          <h2 className="text-2xl font-bold text-gray-100">{headerText}</h2>
+        {/* Controls row */}
+        <div className="flex items-center justify-center gap-3 flex-wrap">
           <button onClick={goToToday} className="btn-primary text-sm py-2 shrink-0 whitespace-nowrap">
             Today
           </button>
@@ -1616,16 +1629,6 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
             )}
           </div>
         </div>
-
-        <button
-          onClick={goToNext}
-          className="p-2 hover:bg-dark-200 rounded-lg transition-colors text-gray-400 hover:text-neon"
-          aria-label={view === 'month' ? 'Next month' : view === 'week' ? 'Next week' : 'Next day'}
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-        </button>
       </div>
 
       {/* Color legend: reflects the active mode (groups vs people).
@@ -1682,7 +1685,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
         if (items.length === 0) return null;
 
         return (
-          <div className="mb-4 flex items-center flex-wrap gap-x-4 gap-y-2">
+          <div className="mb-2 flex items-center flex-wrap gap-x-4 gap-y-1 shrink-0">
             <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
               {label}
             </span>
@@ -1743,18 +1746,18 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
 
       {/* Day-name header row (month view only; week view has its own header). */}
       {view === 'month' && (
-        <div className="grid gap-1 mb-1" style={{ gridTemplateColumns: 'repeat(7, minmax(0, 1fr))' }}>
+        <div className="grid gap-1 mb-1 shrink-0" style={{ gridTemplateColumns: 'repeat(7, minmax(0, 1fr))' }}>
           {dayNames.map((day) => (
-            <div key={day} className="text-center text-sm font-semibold text-gray-500 py-2">{day}</div>
+            <div key={day} className="text-center text-xs font-semibold text-gray-500 py-1">{day}</div>
           ))}
         </div>
       )}
 
       {/* ── Month view ─────────────────────────────────────────────── */}
       {view === 'month' && (
-        <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(7, minmax(0, 1fr))' }}>
+        <div className="grid gap-1 flex-1 min-h-0" style={{ gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gridAutoRows: '1fr' }}>
           {days.map((date, index) => {
-            if (!date) return <div key={`empty-${index}`} className="min-h-[96px]" />;
+            if (!date) return <div key={`empty-${index}`} />;
             const isCurrentDay = isToday(date);
             const isSelectedDay = isSelected(date);
             const dayEvents = eventsForDay(date);
@@ -1774,7 +1777,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                   }
                 }}
                 className={[
-                  'min-h-[96px] p-1.5 rounded-lg transition-colors cursor-pointer',
+                  'p-1.5 rounded-lg transition-colors cursor-pointer overflow-hidden',
                   'flex flex-col gap-1 text-left',
                   isSelectedDay
                     ? 'bg-dark-100 ring-2 ring-neon/50 shadow-lg shadow-neon/5'
@@ -1829,8 +1832,8 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
 
       {/* ── Week view ──────────────────────────────────────────────── */}
       {view === 'week' && !(mode === 'people' && selectedGroupId !== 'all') && (
-        <div className="border border-dark-300 rounded-lg overflow-hidden">
-          <div className="grid" style={{ gridTemplateColumns: '64px repeat(7, minmax(0, 1fr))' }}>
+        <div className="border border-dark-300 rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
+          <div className="grid shrink-0" style={{ gridTemplateColumns: '64px repeat(7, minmax(0, 1fr))' }}>
             <div className="bg-dark-100 border-b border-dark-300" />
             {weekDates.map((date) => {
               const isCurrentDay = isToday(date);
@@ -1840,13 +1843,13 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                   key={`weekhead-${date.toISOString()}`}
                   onClick={() => handleDateClick(date)}
                   className={[
-                    'py-2 border-b border-dark-300 text-center transition-colors',
+                    'py-1.5 border-b border-dark-300 text-center transition-colors',
                     isSelectedDay ? 'bg-neon/10' : 'bg-dark-100 hover:bg-dark-200',
                   ].join(' ')}
                 >
                   <div className="text-xs font-semibold text-gray-500">{dayNames[date.getDay()]}</div>
                   <div className={[
-                    'mt-1 inline-flex items-center justify-center w-8 h-8 rounded-full text-sm font-bold',
+                    'mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-full text-sm font-bold',
                     isSelectedDay ? 'bg-neon text-dark' : isCurrentDay ? 'bg-neon/20 text-neon' : 'text-gray-300',
                   ].join(' ')}>
                     {date.getDate()}
@@ -1856,7 +1859,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
             })}
           </div>
 
-          <div className="relative">
+          <div className="relative flex-1 overflow-y-auto min-h-0">
             <div className="grid" style={{ gridTemplateColumns: '64px repeat(7, minmax(0, 1fr))' }}>
               {Array.from({ length: visibleHourCount }, (_, i) => {
                 const hour = visibleHours.start + i;
@@ -1972,10 +1975,10 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
 
       {/* ── Week view (People mode): rows = people, columns = days ───── */}
       {view === 'week' && mode === 'people' && selectedGroupId !== 'all' && (
-        <div className="border border-dark-300 rounded-lg overflow-hidden">
+        <div className="border border-dark-300 rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
           {/* Day header */}
           <div
-            className="grid bg-dark-100"
+            className="grid bg-dark-100 shrink-0"
             style={{ gridTemplateColumns: '160px repeat(7, minmax(0, 1fr))' }}
           >
             <div className="px-3 py-2 border-b border-dark-300 text-xs font-semibold text-gray-500 uppercase tracking-wide">
@@ -2013,6 +2016,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
           </div>
 
           {/* Person rows */}
+          <div className="flex-1 overflow-y-auto min-h-0">
           {groupMembers.length === 0 ? (
             <div className="px-4 py-6 text-center text-sm text-gray-500">
               No members in this group yet.
@@ -2110,25 +2114,26 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
               );
             })
           )}
+          </div>
         </div>
       )}
 
       {/* ── Day view ───────────────────────────────────────────────── */}
       {view === 'day' && !(mode === 'people' && selectedGroupId !== 'all') && (
-        <div className="border border-dark-300 rounded-lg overflow-hidden">
-          <div className="grid" style={{ gridTemplateColumns: '64px 1fr' }}>
+        <div className="border border-dark-300 rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
+          <div className="grid shrink-0" style={{ gridTemplateColumns: '64px 1fr' }}>
             <div className="bg-dark-100 border-b border-dark-300" />
-            <div className="bg-dark-100 border-b border-dark-300 py-2 text-center">
+            <div className="bg-dark-100 border-b border-dark-300 py-1.5 text-center">
               <div className="text-xs font-semibold text-gray-500">
                 {(selectedDate ?? currentDate).toLocaleDateString('en-US', { weekday: 'long' })}
               </div>
-              <div className="mt-1 text-sm font-bold text-gray-200">
+              <div className="mt-0.5 text-sm font-bold text-gray-200">
                 {(selectedDate ?? currentDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
               </div>
             </div>
           </div>
 
-          <div className="relative">
+          <div className="relative flex-1 overflow-y-auto min-h-0">
             <div className="grid" style={{ gridTemplateColumns: '64px 1fr' }}>
               {Array.from({ length: visibleHourCount }, (_, i) => {
                 const hour = visibleHours.start + i;
@@ -2243,9 +2248,9 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
         const dayStartMs = startOfDay(focusDate).getTime();
         const dayEndMs = addDays(startOfDay(focusDate), 1).getTime();
         return (
-          <div className="border border-dark-300 rounded-lg overflow-hidden">
+          <div className="border border-dark-300 rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
             <div
-              className="grid bg-dark-100"
+              className="grid bg-dark-100 shrink-0"
               style={{ gridTemplateColumns: '160px 1fr' }}
             >
               <div className="px-3 py-2 border-b border-dark-300 text-xs font-semibold text-gray-500 uppercase tracking-wide">
@@ -2274,6 +2279,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
               </div>
             </div>
 
+            <div className="flex-1 overflow-y-auto min-h-0">
             {groupMembers.length === 0 ? (
               <div className="px-4 py-6 text-center text-sm text-gray-500">
                 No members in this group yet.
@@ -2281,9 +2287,6 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
             ) : (
               groupMembers.map((m) => {
                 const memberColor = memberColorById.get(m.user_id) || m.color;
-                // Events rendered as colored bars on THIS member's row:
-                // anything they created or RSVP'd going/maybe to within the
-                // selected group (and current visible range).
                 const coloredForMember =
                   visibleColoredIdsByMember.get(m.user_id) || null;
                 const memberEventsAll = eventsInRange
@@ -2463,16 +2466,16 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                 );
               })
             )}
+            </div>
           </div>
         );
       })()}
 
       {/* Selected Date Display */}
-      {selectedDate && (
-        <div className="mt-6 p-4 bg-dark-100 border border-dark-300 rounded-lg">
-          <p className="text-sm text-gray-500">Selected Date:</p>
-          <p className="text-lg font-semibold text-gray-200">
-            {selectedDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+      {selectedDate && view === 'month' && (
+        <div className="mt-2 px-3 py-2 bg-dark-100 border border-dark-300 rounded-lg shrink-0">
+          <p className="text-sm font-medium text-gray-300">
+            {selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
           </p>
         </div>
       )}
