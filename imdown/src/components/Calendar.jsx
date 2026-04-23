@@ -184,6 +184,14 @@ function mixWithWhite(hex, t) {
   return `rgb(${r2},${g2},${b2})`;
 }
 
+function hexToRgba(hex, alpha) {
+  const n = normalizeHex(hex) || DEFAULT_GROUP_COLOR;
+  const r = parseInt(n.slice(1, 3), 16);
+  const g = parseInt(n.slice(3, 5), 16);
+  const b = parseInt(n.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 function textColorOnBg(backgroundCss) {
   if (typeof backgroundCss === 'string' && backgroundCss.startsWith('rgb(')) {
     const m = backgroundCss.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
@@ -1195,9 +1203,26 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     return DEFAULT_GROUP_COLOR;
   };
 
+  const isTentativeEvent = (ev) => {
+    if (isMine(ev)) return false;
+    if (isPersonalEvent(ev)) return false;
+    const rsvp = getUserRsvp(ev);
+    return rsvp !== 'going' && rsvp !== 'maybe';
+  };
+
   const getEventTheme = (ev) => {
     const mine = isMine(ev);
     const baseHex = resolveEventBaseColor(ev);
+    const tentative = isTentativeEvent(ev);
+
+    if (tentative) {
+      return {
+        backgroundColor: hexToRgba(baseHex, 0.12),
+        borderLeft: `3px solid ${baseHex}`,
+        color: mixWithWhite(baseHex, 0.25),
+      };
+    }
+
     const backgroundColor = mine ? baseHex : mixWithWhite(baseHex, 0.38);
     return {
       backgroundColor,
@@ -1725,7 +1750,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                       }}
                       title={`${ev.title} · ${hmLocal(ev.start_time)}–${hmLocal(ev.end_time)}`}
                       style={getEventTheme(ev)}
-                      className="w-full truncate text-left rounded px-1.5 py-0.5 text-[11px] leading-tight transition-opacity hover:opacity-90"
+                      className={`w-full truncate text-left rounded px-1.5 py-0.5 text-[11px] leading-tight transition-opacity hover:opacity-90${isTentativeEvent(ev) ? ' event-tentative' : ''}`}
                     >
                       <span className="opacity-90 mr-1">{hmLocal(ev.start_time)}</span>
                       <span className="font-semibold">{ev.title}</span>
@@ -1841,7 +1866,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                           key={ev.id}
                           type="button"
                           onClick={() => openEventDetail(ev)}
-                          className="absolute rounded-md text-xs px-1.5 py-0.5 shadow pointer-events-auto cursor-pointer overflow-hidden transition-opacity hover:opacity-90"
+                          className={`absolute rounded-md text-xs px-1.5 py-0.5 shadow pointer-events-auto cursor-pointer overflow-hidden transition-opacity hover:opacity-90${isTentativeEvent(ev) ? ' event-tentative' : ''}`}
                           style={{
                             top,
                             height,
@@ -2004,7 +2029,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                                 key={ev.id}
                                 type="button"
                                 onClick={() => openEventDetail(ev)}
-                                className="w-full truncate text-left rounded px-1.5 py-0.5 text-[11px] leading-tight transition-opacity hover:opacity-90"
+                                className={`w-full truncate text-left rounded px-1.5 py-0.5 text-[11px] leading-tight transition-opacity hover:opacity-90${isTentativeEvent(ev) ? ' event-tentative' : ''}`}
                                 style={getEventTheme(ev)}
                                 title={`${ev.title} · ${hmLocal(ev.start_time)}–${hmLocal(ev.end_time)}`}
                               >
@@ -2102,7 +2127,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                             key={ev.id}
                             type="button"
                             onClick={() => openEventDetail(ev)}
-                            className="absolute rounded-md text-xs px-1.5 py-0.5 shadow pointer-events-auto cursor-pointer overflow-hidden transition-opacity hover:opacity-90"
+                            className={`absolute rounded-md text-xs px-1.5 py-0.5 shadow pointer-events-auto cursor-pointer overflow-hidden transition-opacity hover:opacity-90${isTentativeEvent(ev) ? ' event-tentative' : ''}`}
                             style={{
                               top,
                               height,
@@ -2328,7 +2353,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                             key={ev.id}
                             type="button"
                             onClick={() => openEventDetail(ev)}
-                            className="absolute top-1 bottom-1 rounded-md text-[10px] px-1.5 shadow overflow-hidden transition-opacity hover:opacity-90 text-left"
+                            className={`absolute top-1 bottom-1 rounded-md text-[10px] px-1.5 shadow overflow-hidden transition-opacity hover:opacity-90 text-left${isTentativeEvent(ev) ? ' event-tentative' : ''}`}
                             style={{
                               left: `${left}%`,
                               width: `${Math.max(width, 0.5)}%`,
@@ -2536,7 +2561,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60" onClick={() => setViewingEvent(null)}>
           <div className="w-full max-w-md bg-dark-50 rounded-2xl shadow-2xl border border-dark-300 overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div
-              className="px-6 py-4"
+              className={`px-6 py-4${isTentativeEvent(viewingEvent) ? ' event-tentative' : ''}`}
               style={getEventTheme(viewingEvent)}
             >
               <div className="flex items-start justify-between gap-4">
