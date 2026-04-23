@@ -962,8 +962,8 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
   // group: only `{ id, start_time, end_time }`, never titles/locations.
   // Two sources are merged per member:
   //   1. Events they CREATED (any group, including private)
-  //   2. Events they RSVP'd `going` to (created by anyone)
-  // RSVP `maybe` is intentionally treated as free.
+  //   2. Events they RSVP'd `going` OR `maybe` to (created by anyone)
+  // `notgoing` is treated as free; intent (going vs maybe) is never exposed.
   useEffect(() => {
     let cancelled = false;
     if (
@@ -997,7 +997,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
             .from('event_rsvps')
             .select('user_id, events(id, start_time, end_time)')
             .in('user_id', memberIds)
-            .eq('status', 'going'),
+            .in('status', ['going', 'maybe']),
         ]);
 
         if (createdRes.error) throw createdRes.error;
