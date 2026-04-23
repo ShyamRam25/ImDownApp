@@ -949,13 +949,24 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     });
   }, [events, visibleStart, visibleEnd, hiddenEventIds]);
 
-  // IDs of events that are already rendered as full colored chips for the
-  // selected group. Busy-overlay rendering uses this to avoid double-showing
-  // an event as both colored and grey for the same person.
-  const visibleEventIds = useMemo(
-    () => new Set(eventsInRange.map((e) => e.id)),
-    [eventsInRange]
-  );
+  // Per-creator set of event IDs that are already rendered as full colored
+  // chips in People mode. Busy-overlay rendering uses this to avoid
+  // double-showing an event as both colored and grey FOR THE SAME PERSON.
+  // It must be keyed by creator because People-mode rows only render events
+  // where `ev.created_by === member.user_id` — an RSVP on someone else's
+  // event should still appear as a grey busy block on the RSVP'er's row.
+  const visibleEventIdsByCreator = useMemo(() => {
+    const map = new Map();
+    for (const e of eventsInRange) {
+      let set = map.get(e.created_by);
+      if (!set) {
+        set = new Set();
+        map.set(e.created_by, set);
+      }
+      set.add(e.id);
+    }
+    return map;
+  }, [eventsInRange]);
 
   // ── People-mode busy overlay ──────────────────────────────────────────
   // Fetch a minimal "free/busy" projection for each member of the selected
@@ -1987,10 +1998,13 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                       return en > dayStart && s < dayEnd;
                     });
                     // Gray busy entries for this member, scoped to this day
-                    // and excluding any event already shown as a colored chip
-                    // (same event id in the visible group set).
+                    // and excluding only the events already rendered as a
+                    // colored chip on THIS member's row (i.e. events THEY
+                    // created). RSVPs on other members' events remain grey.
+                    const ownColoredIds =
+                      visibleEventIdsByCreator.get(m.user_id) || null;
                     const busyForMember = (busyByUser.get(m.user_id) || []).filter((b) => {
-                      if (visibleEventIds.has(b.id)) return false;
+                      if (ownColoredIds && ownColoredIds.has(b.id)) return false;
                       const s = new Date(b.start_time).getTime();
                       const en = new Date(b.end_time).getTime();
                       return en > dayStart && s < dayEnd;
@@ -2227,9 +2241,13 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
                   .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
 
                 // Grey busy entries for this member on this day, excluding
-                // any event already being rendered as a colored bar.
+                // only events already rendered as a colored bar on THIS
+                // member's row (events they created). RSVPs on other
+                // members' events remain as grey busy blocks.
+                const ownColoredIds =
+                  visibleEventIdsByCreator.get(m.user_id) || null;
                 const memberBusyAll = (busyByUser.get(m.user_id) || []).filter((b) => {
-                  if (visibleEventIds.has(b.id)) return false;
+                  if (ownColoredIds && ownColoredIds.has(b.id)) return false;
                   const s = new Date(b.start_time).getTime();
                   const en = new Date(b.end_time).getTime();
                   return en > dayStartMs && s < dayEndMs;
