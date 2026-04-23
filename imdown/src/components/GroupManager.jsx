@@ -1,12 +1,21 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
-const DEFAULT_GROUP_COLOR = '#00E676';
+const GROUP_COLOR_PALETTE = [
+  '#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16',
+  '#22c55e', '#10b981', '#14b8a6', '#06b6d4', '#0ea5e9',
+  '#3b82f6', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef',
+  '#ec4899', '#f43f5e', '#00E676',
+];
+
+function randomGroupColor() {
+  return GROUP_COLOR_PALETTE[Math.floor(Math.random() * GROUP_COLOR_PALETTE.length)];
+}
 
 const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
   const [tab, setTab] = useState('mine'); // 'mine' | 'create' | 'join' | 'invite'
   const [newGroupName, setNewGroupName] = useState('');
-  const [newGroupColor, setNewGroupColor] = useState(DEFAULT_GROUP_COLOR);
+  const [newGroupColor, setNewGroupColor] = useState(() => randomGroupColor());
   const [joinSearch, setJoinSearch] = useState('');
   const [inviteGroupId, setInviteGroupId] = useState('');
   const [inviteUsername, setInviteUsername] = useState('');
@@ -67,7 +76,7 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
       if (memberErr) throw memberErr;
 
       setNewGroupName('');
-      setNewGroupColor(DEFAULT_GROUP_COLOR);
+      setNewGroupColor(randomGroupColor());
       setMessage({ type: 'success', text: `Created "${group.name}"!` });
       onGroupsChanged();
     } catch (err) {
@@ -83,7 +92,7 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
     try {
       const { error } = await supabase
         .from('group_members')
-        .insert({ group_id: groupId, user_id: user.id, role: 'member', color: DEFAULT_GROUP_COLOR });
+        .insert({ group_id: groupId, user_id: user.id, role: 'member', color: randomGroupColor() });
 
       if (error) throw error;
 
@@ -273,7 +282,7 @@ const GroupManager = ({ user, groups, onClose, onGroupsChanged }) => {
                         <span>Color</span>
                         <input
                           type="color"
-                          value={g.color || DEFAULT_GROUP_COLOR}
+                          value={g.color || '#00E676'}
                           onChange={(e) => handleUpdateGroupColor(g.id, e.target.value)}
                           disabled={loading}
                           className="h-8 w-10 cursor-pointer rounded border border-dark-400 bg-dark-200 p-0.5 disabled:opacity-50"
