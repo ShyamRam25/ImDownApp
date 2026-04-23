@@ -518,10 +518,15 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
   const fetchEvents = useCallback(async () => {
     if (!user?.id) return;
 
+    // 'personal' limits the calendar to events the user created that have
+    // no group links. The personal-events branch below runs regardless;
+    // emptying groupIds simply skips the group-shared fetch.
     const groupIds =
-      selectedGroupId === 'all'
-        ? groups.map((g) => g.id)
-        : [selectedGroupId];
+      selectedGroupId === 'personal'
+        ? []
+        : selectedGroupId === 'all'
+          ? groups.map((g) => g.id)
+          : [selectedGroupId];
 
     setEventsLoading(true);
     try {
@@ -616,9 +621,13 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
   const visibleHourCount = visibleHours.end - visibleHours.start;
 
   // Auto-reset mode to 'groups' whenever we leave a specific-group view,
-  // since People mode is only meaningful when a single group is selected.
+  // since People mode is only meaningful when a single group is selected
+  // (neither 'all' nor 'personal' have a member list to render).
   useEffect(() => {
-    if (selectedGroupId === 'all' && mode !== 'groups') {
+    if (
+      (selectedGroupId === 'all' || selectedGroupId === 'personal') &&
+      mode !== 'groups'
+    ) {
       setMode('groups');
       localStorage.setItem(MODE_STORAGE_KEY, 'groups');
     }
@@ -628,7 +637,12 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
   // (used for legend + per-creator color resolution). Clear otherwise.
   useEffect(() => {
     let cancelled = false;
-    if (selectedGroupId === 'all' || mode !== 'people' || !user?.id) {
+    if (
+      selectedGroupId === 'all' ||
+      selectedGroupId === 'personal' ||
+      mode !== 'people' ||
+      !user?.id
+    ) {
       setGroupMembers([]);
       return () => { cancelled = true; };
     }
@@ -717,7 +731,17 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     setDraftStart('12:00');
     setDraftEnd('13:00');
     setDraftDetails('');
-    setDraftGroups(groups.length > 0 ? [groups[0].id] : []);
+    // Personal filter → no group links; specific-group filter → that group;
+    // otherwise fall back to the first available group (legacy behavior).
+    setDraftGroups(
+      selectedGroupId === 'personal'
+        ? []
+        : selectedGroupId !== 'all' && groups.some((g) => g.id === selectedGroupId)
+          ? [selectedGroupId]
+          : groups.length > 0
+            ? [groups[0].id]
+            : []
+    );
     setEventError('');
     setEventModalOpen(true);
   };
@@ -989,6 +1013,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
     let cancelled = false;
     if (
       selectedGroupId === 'all' ||
+      selectedGroupId === 'personal' ||
       mode !== 'people' ||
       !user?.id ||
       groupMembers.length === 0
@@ -1205,9 +1230,13 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
   const resolveEventBaseColor = (ev) => {
     const links = Array.isArray(ev.event_groups) ? ev.event_groups : [];
 
-    if (mode === 'people' && selectedGroupId !== 'all') {
+    if (mode === 'people' && selectedGroupId !== 'all' && selectedGroupId !== 'personal') {
       return memberColorById.get(ev.created_by) || FORMER_MEMBER_COLOR;
     }
+
+    // Personal filter shows only unshared events the user created; paint
+    // them with the shared personal color for visual consistency.
+    if (selectedGroupId === 'personal') return PERSONAL_EVENT_COLOR;
 
     if (selectedGroupId !== 'all') {
       return groupColorById.get(selectedGroupId) || DEFAULT_GROUP_COLOR;
@@ -1314,7 +1343,7 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
             })}
           </div>
 
-          {selectedGroupId !== 'all' && (
+          {selectedGroupId !== 'all' && selectedGroupId !== 'personal' && (
             <div
               className="inline-flex rounded-xl bg-dark-100 border border-dark-300 p-1 gap-0.5"
               role="group"
@@ -1606,7 +1635,8 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
       {(() => {
         let items = [];
         let label = '';
-        const isPeople = mode === 'people' && selectedGroupId !== 'all';
+        const isPeople =
+          mode === 'people' && selectedGroupId !== 'all' && selectedGroupId !== 'personal';
 
         if (isPeople) {
           label = 'People';
@@ -1620,6 +1650,14 @@ const Calendar = ({ user, groups, selectedGroupId, refreshKey }) => {
               editable: true,
             };
           });
+        } else if (selectedGroupId === 'personal') {
+          label = 'Personal';
+          items = [{
+            key: 'personal',
+            color: PERSONAL_EVENT_COLOR,
+            name: 'My calendar',
+            editable: false,
+          }];
         } else if (selectedGroupId !== 'all') {
           const g = groups.find((x) => x.id === selectedGroupId);
           label = 'Group';
